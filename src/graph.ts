@@ -459,7 +459,8 @@ function isNuxt(root: string): boolean {
 
 const NUXT_BUILTINS = [
   'NuxtLink', 'NuxtPage', 'NuxtLayout', 'NuxtErrorBoundary', 'NuxtLoadingIndicator', 'NuxtRouteAnnouncer',
-  'NuxtClientFallback', 'NuxtIsland', 'NuxtTime', 'NuxtWelcome', 'ClientOnly', 'DevOnly', 'ServerPlaceholder',
+  'NuxtAnnouncer', 'NuxtClientFallback', 'NuxtIsland', 'NuxtTime', 'NuxtWelcome', 'NuxtImg', 'NuxtPicture',
+  'ClientOnly', 'DevOnly', 'ServerPlaceholder',
 ]
 
 /**

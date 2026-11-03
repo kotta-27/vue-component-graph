@@ -132,9 +132,9 @@ export function createServer(defaultRoot: string): McpServer {
         if (!graph.routes.length) lines.push('  ルート定義が見つかりません')
         for (const [i, line] of routeLines(graph, graph.routes.map((_, i) => i)).entries()) {
           const r = graph.routes[i]
-          const extra = r.chain.filter((id) => id !== r.view && !r.layouts.includes(id)).map(nameOf)
+          const extra = r.chain.filter((id) => id !== r.view && !r.layouts.includes(id)).map((id) => nameOf(graph, id))
           const notes = [
-            r.layouts.length ? `親: ${r.layouts.map(nameOf).join(' > ')}` : '',
+            r.layouts.length ? `親: ${r.layouts.map((id) => nameOf(graph, id)).join(' > ')}` : '',
             extra.length ? `名前付きビュー: ${extra.join(', ')}` : '',
           ].filter(Boolean)
           lines.push(`  ${line}${notes.length ? `（${notes.join(' / ')}）` : ''}`)
@@ -162,7 +162,7 @@ export function createServer(defaultRoot: string): McpServer {
           lines.push(...(items.length ? items.map((s) => `  ${s}`) : ['  なし']))
         }
         section('未使用', graph.orphans)
-        section('循環', graph.cycles.map((c) => [...c, c[0]].map(nameOf).join(' → ')))
+        section('循環', graph.cycles.map((c) => [...c, c[0]].map((id) => nameOf(graph, id)).join(' → ')))
         section('再帰', graph.recursive)
         if (graph.warnings.length) section('解析の警告', graph.warnings.slice(0, 30))
         return lines
@@ -201,7 +201,7 @@ function label(n: GraphNode): string {
 }
 
 function pagesLine(graph: Graph, n: GraphNode): string[] {
-  if (n.shell) return ['表示されるページ: 全ページ（createApp のルート配下で常に表示）']
+  if (n.shell) return ['表示されるページ: 全ページ（App や共通レイアウトの配下で常に表示）']
   if (!n.routes.length) {
     return [`表示されるページ: なし（${graph.routes.length ? 'どのルートからも辿れない' : 'ルート定義が見つからない'}）`]
   }
@@ -224,7 +224,7 @@ export function componentInfo(graph: Graph, query: string): string[] {
   const status: string[] = []
   if (graph.orphans.includes(n.id)) status.push('未使用')
   const cycle = graph.cycles.find((c) => c.includes(n.id))
-  if (cycle) status.push(`循環: ${[...cycle, cycle[0]].map(nameOf).join(' → ')}`)
+  if (cycle) status.push(`循環: ${[...cycle, cycle[0]].map((id) => nameOf(graph, id)).join(' → ')}`)
   if (graph.recursive.includes(n.id)) status.push('再帰（自分自身を描画）')
   if (status.length) lines.push(`状態: ${status.join(' / ')}`)
   if (n.kind === 'component') lines.push(...pagesLine(graph, n))
@@ -263,11 +263,11 @@ export function whoUses(graph: Graph, query: string): string[] {
   const ancestorModules = ancestors.filter((id) => byId.get(id)?.kind !== 'component')
   const lines = [`${n.name} (${n.id})`]
   lines.push(`直接の親 (${direct.length}):`, ...(direct.length ? direct.map((id) => `  - ${label(byId.get(id)!)}`) : ['  なし']))
-  lines.push(`祖先 (${ancestorComps.length}): ${ancestorComps.map(nameOf).join(', ') || 'なし'}`)
-  if (ancestorModules.length) lines.push(`読み込むモジュール (${ancestorModules.length}): ${ancestorModules.map(nameOf).join(', ')}`)
+  lines.push(`祖先 (${ancestorComps.length}): ${ancestorComps.map((id) => nameOf(graph, id)).join(', ') || 'なし'}`)
+  if (ancestorModules.length) lines.push(`読み込むモジュール (${ancestorModules.length}): ${ancestorModules.map((id) => nameOf(graph, id)).join(', ')}`)
   if (direct.length) {
     lines.push(`経路${truncated ? `（先頭 ${LIMIT} 件）` : ''}:`)
-    for (const p of paths) lines.push(`  ${p.map(nameOf).join(' → ')}`)
+    for (const p of paths) lines.push(`  ${p.map((id) => nameOf(graph, id)).join(' → ')}`)
   }
   if (n.kind === 'component') lines.push(...pagesLine(graph, n))
   return lines
