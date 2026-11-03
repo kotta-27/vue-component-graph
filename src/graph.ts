@@ -24,7 +24,11 @@ export interface RouteInfo {
   path: string
   /** path が式（`c.path` など）で、実際の URL は実行時に決まる */
   dynamic: boolean
-  /** 外側 → 内側の順に描画されるコンポーネント（ネストしたルートの親を含む） */
+  /** このルートのメインの画面（名前付きビューなら default） */
+  view: string
+  /** 親ルートの画面（外側 → 内側） */
+  layouts: string[]
+  /** このルートで描画されるルートコンポーネントすべて（layouts、view、名前付きビュー） */
   chain: string[]
   /** ルートを定義しているファイル */
   source: string
@@ -298,17 +302,29 @@ export function analyze(rootDir: string, options: BuildOptions = {}): { graph: G
       entries.add(rel(info.file))
     }
     const add = (r: RawRoute, parentChain: string[], parentPath: string, parentDynamic: boolean) => {
-      const chain = [...parentChain]
+      const own: { id: string; view: string }[] = []
       for (const ref of r.refs) {
         const t = ref.source
           ? targetOf(ref.source, 'default', info.file, true)
           : bindingTarget(info, ref.local!, targetOf)
-        if (t?.file) chain.push(rel(t.file))
+        if (t?.file) own.push({ id: rel(t.file), view: ref.view })
       }
       const path = r.dynamic ? (parentPath ? `${parentPath}/${r.path}` : r.path) : joinRoutePath(parentPath, r.path)
       const dynamic = parentDynamic || r.dynamic
-      if (chain.length > parentChain.length) routes.push({ path, dynamic, chain, source: rel(info.file) })
-      for (const c of r.children) add(c, chain, path, dynamic)
+      const view = (own.find((o) => o.view === 'default') ?? own[0])?.id
+      // 子ルートの親として渡すのはメインの画面だけ（名前付きビューは子に引き継がない）
+      const layouts = view ? [...parentChain, view] : parentChain
+      if (view) {
+        routes.push({
+          path,
+          dynamic,
+          view,
+          layouts: parentChain,
+          chain: [...parentChain, ...own.map((o) => o.id)],
+          source: rel(info.file),
+        })
+      }
+      for (const c of r.children) add(c, layouts, path, dynamic)
     }
     for (const r of info.routes) add(r, [], '', false)
   }
@@ -413,13 +429,13 @@ function nuxtRoutes(root: string, srcDir: string, rel: (f: string) => string) {
           .replace(/\[(\w+)\]/g, ':$1'),
       )
     // pages/users.vue があれば pages/users/[id].vue の親ルートになる
-    const chain: string[] = []
+    const layouts: string[] = []
     for (let i = 1; i < segs.length; i++) {
       const parent = join(pagesDir, ...segs.slice(0, i)) + '.vue'
-      if (existsSync(parent)) chain.push(rel(parent))
+      if (existsSync(parent)) layouts.push(rel(parent))
     }
-    chain.push(rel(file))
-    routes.push({ path: '/' + parts.join('/'), dynamic: false, chain, source: rel(pagesDir) })
+    const view = rel(file)
+    routes.push({ path: '/' + parts.join('/'), dynamic: false, view, layouts, chain: [...layouts, view], source: rel(pagesDir) })
   }
   return { routes, shell }
 }

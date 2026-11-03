@@ -29,6 +29,8 @@ export interface ReExport {
 export interface RouteRef {
   local?: string
   source?: string
+  /** 名前付きビューの名前。`component:` は 'default' */
+  view: string
 }
 
 export interface RawRoute {
@@ -249,14 +251,19 @@ function toRoute(obj: any, code: string): RawRoute | null {
   }
 
   const refs: RouteRef[] = []
-  const pushRef = (v: any) => {
-    if (v.type === 'Identifier') return refs.push({ local: v.name })
+  const pushRef = (v: any, view: string) => {
+    if (v.type === 'Identifier') return refs.push({ local: v.name, view })
     const found = collectDynamicImports(v)
-    if (found.length === 1) refs.push({ source: found[0].source })
+    if (found.length === 1) refs.push({ source: found[0].source, view })
   }
-  if (props.has('component')) pushRef(props.get('component'))
+  if (props.has('component')) pushRef(props.get('component'), 'default')
   const named = props.get('components')
-  if (named?.type === 'ObjectExpression') for (const p of named.properties) if (p.value) pushRef(p.value)
+  if (named?.type === 'ObjectExpression') {
+    for (const p of named.properties) {
+      const view = propKey(p)
+      if (view && p.value) pushRef(p.value, view)
+    }
+  }
 
   const children: RawRoute[] = []
   if (props.has('children')) findRoutes(props.get('children'), code, children)

@@ -62,6 +62,48 @@ npx github:kotta-27/vue-component-graph --since main
 - `.vue` 以外の変更も辿る（composable、ユーティリティ、`?raw` で読み込むファイルなど）
 - `createApp(App)` の配下にある部品（ヘッダーなど）や、エントリが読み込むグローバル CSS が変わったときは「全ページに影響」と判定する
 
+## AI エージェントから使う（MCP）
+
+MCP サーバーとして起動でき、Claude Code などのエージェントがツールとして呼び出せる。grep では見つからない依存（自動 import、グローバル登録、kebab-case のタグ）や「どの URL に出るか」を、エージェントが正確に調べられる。
+
+```sh
+claude mcp add -s user vue-component-graph -- npx -y github:kotta-27/vue-component-graph mcp
+```
+
+| ツール | 入力 | 返すもの |
+|---|---|---|
+| `component_info` | `component` | 使っている側、使っているもの、表示されるページ、外部コンポーネント |
+| `who_uses` | `component` | 直接の親、祖先、エントリからの経路、表示されるページ |
+| `impact` | `files` または `since` | 影響を受けるコンポーネントと、確認すべきページ |
+| `routes` | なし | ルートごとの画面、親ルート、名前付きビュー、全ページ共通の部品 |
+| `find_issues` | なし | 未使用、循環、再帰、解析の警告 |
+
+- どのツールも `root`（package.json のあるディレクトリ）を受け取る。省略するとサーバーの起動ディレクトリを使う
+- `impact` に `files` を渡すと「これらを変えたら」の見積もりになる。エージェントが変更する前に影響の広さを確かめられる
+- すべて読み取り専用で、ファイルを書き換えない
+
+出力の例（`who_uses`、`examples/shop` に対して）：
+
+```
+PriceTag (src/components/product/PriceTag.vue)
+直接の親 (4):
+  - CartItem (src/components/cart/CartItem.vue)
+  - ProductCard (src/components/product/ProductCard.vue)
+  - ProductView (src/views/ProductView.vue)
+  - OrdersView (src/views/account/OrdersView.vue)
+祖先 (7): router.ts, CartView, CartItem, HomeView, ProductCard, ProductView, OrdersView
+経路:
+  router.ts → CartView → CartItem → PriceTag
+  router.ts → HomeView → ProductCard → PriceTag
+  router.ts → ProductView → PriceTag
+  router.ts → OrdersView → PriceTag
+表示されるページ (4):
+  /                HomeView
+  /products/:id    ProductView
+  /cart            CartView
+  /account/orders  OrdersView
+```
+
 ## 検出できるもの
 
 ### コンポーネント間の依存
@@ -123,6 +165,8 @@ vue-component-graph [dir] [options]
 | `--json` | HTML の代わりに JSON を標準出力へ |
 | `--no-open` | 生成後にブラウザで開かない |
 
+`vue-component-graph mcp [--root <dir>]` で MCP サーバー（stdio）として起動する。
+
 `<name>` はコンポーネント名（`AppHeader`、`app-header`）かパスの末尾（`nav/NavLink`）。複数に一致した場合は候補を表示して終了する。
 
 ## JSON 出力
@@ -144,7 +188,14 @@ vue-component-graph [dir] [options]
     shell: boolean        // 全ページ共通
   }[]
   edges: { from: string; to: string; type: 'template' | 'script'; async: boolean }[]
-  routes: { path: string; dynamic: boolean; chain: string[]; source: string }[]
+  routes: {
+    path: string
+    dynamic: boolean      // path が式で、実際の URL は実行時に決まる
+    view: string          // メインの画面
+    layouts: string[]     // 親ルートの画面
+    chain: string[]       // このルートで描画されるルートコンポーネントすべて
+    source: string        // ルートを定義しているファイル
+  }[]
   orphans: string[]
   cycles: string[][]
   recursive: string[]

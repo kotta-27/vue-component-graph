@@ -38,8 +38,10 @@
   ],
   "license": "MIT",
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.2",
     "@vue/compiler-sfc": "^3.5.44",
-    "cac": "^7.1.0"
+    "cac": "^7.1.0",
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@babel/types": "^7.29.11",

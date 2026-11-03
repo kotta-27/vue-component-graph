@@ -720,7 +720,7 @@
 
   function routeItem(i) {
     const r = DATA.routes[i]
-    const page = nodeById.get(r.chain[r.chain.length - 1])
+    const page = nodeById.get(r.view)
     return `<li class="link route" data-select="${esc(page.id)}" title="${esc(r.chain.join(' > '))}"><span class="rpath">${routeLabel(r)}</span><span class="rcomp">${esc(page.name)}</span></li>`
   }
 
@@ -747,7 +747,7 @@
     if (shell.length) h += `<p class="note">全ページ共通：${shell.map(esc).join('、')}</p>`
     h += '<table class="list"><thead><tr><th>パス</th><th>画面</th><th class="num" title="このページで描画されるコンポーネント数（全ページ共通分を除く）">部品</th></tr></thead><tbody>'
     DATA.routes.forEach((r, i) => {
-      const page = nodeById.get(r.chain[r.chain.length - 1])
+      const page = nodeById.get(r.view)
       const hit = IMPACT && state.showImpact && IMPACT.routes.includes(i)
       h +=
         `<tr class="row${hit ? ' impacted' : ''}" data-select="${esc(page.id)}" title="${esc(r.chain.join(' > '))}">` +

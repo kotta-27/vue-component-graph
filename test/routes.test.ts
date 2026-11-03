@@ -17,6 +17,8 @@ describe('vue-router routes', () => {
       ['/settings/profile', false],
       ['`/x/${p}`', true],
     ])
+    expect(graph.routes[3].view).toBe('src/views/SettingsProfile.vue')
+    expect(graph.routes[3].layouts).toEqual(['src/views/Settings.vue'])
     expect(graph.routes[3].chain).toEqual([
       'src/views/Settings.vue',
       'src/views/SettingsProfile.vue',

@@ -3,9 +3,11 @@ import { spawn } from 'node:child_process'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { cac } from 'cac'
-import { analyze, findNodes, subgraph, type Direction, type Graph, type RouteInfo } from './graph'
+import { analyze, findNodes, subgraph, type Direction, type Graph } from './graph'
+import { impactLines } from './format'
 import { renderHtml } from './html'
 import { analyzeImpact, gitChangedFiles, type Impact } from './impact'
+import { startMcpServer } from './mcp'
 import { defaultOutPath } from './output'
 
 const cli = cac('vue-component-graph')
@@ -67,6 +69,14 @@ cli
     if (opts.open) openInBrowser(out)
   })
 
+cli
+  .command('mcp', 'MCP サーバーとして起動する（stdio）')
+  .option('--root <dir>', 'ツールで root を省略したときのプロジェクト（既定: 起動ディレクトリ）')
+  .example('claude mcp add vue-component-graph -- npx github:kotta-27/vue-component-graph mcp')
+  .action(async (opts) => {
+    await startMcpServer(resolve(opts.root ?? '.'))
+  })
+
 cli.help()
 cli.version('0.1.0')
 
@@ -105,36 +115,8 @@ function printSummary(graph: Graph) {
   }
 }
 
-function routeLabel(r: RouteInfo): string {
-  return r.dynamic ? `[動的] ${r.path}` : r.path
-}
-
-/** 全角文字を 2 桁として数えた表示幅 */
-function displayWidth(s: string): number {
-  let w = 0
-  for (const ch of s) w += ch.codePointAt(0)! > 0xff ? 2 : 1
-  return w
-}
-
 function printImpact(graph: Graph, impact: Impact) {
-  const log = (s = '') => console.error(s)
-  const name = (id: string) => id.split('/').pop()!.replace(/\.vue$/, '')
-  log(`\n変更の影響（${impact.since} との差分）`)
-  if (!impact.changed.length) {
-    log('  解析対象に関係する変更はありません')
-    return
-  }
-  log(`  変更ファイル (${impact.changed.length})`)
-  for (const id of impact.changed) log(`    ${id}`)
-  log(`  影響するコンポーネント (${impact.affected.length})`)
-  if (impact.affected.length) log(`    ${impact.affected.map(name).join(', ')}`)
-  const routes = impact.routes.map((i) => graph.routes[i])
-  log(`  確認するページ (${routes.length})${impact.everywhere ? ' ← 全ページに影響' : ''}`)
-  const width = Math.max(0, ...routes.map((r) => displayWidth(routeLabel(r))))
-  for (const r of routes) {
-    const label = routeLabel(r)
-    log(`    ${label}${' '.repeat(width - displayWidth(label))}  ${name(r.chain[r.chain.length - 1])}`)
-  }
+  console.error('\n' + impactLines(graph, impact, `${impact.since} との差分`).join('\n'))
 }
 
 function openInBrowser(file: string) {
