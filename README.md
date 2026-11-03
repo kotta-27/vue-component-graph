@@ -1,34 +1,39 @@
 # vue-component-graph
 
-Vue プロジェクトを静的解析して、**コンポーネントの依存関係**と、**それぞれがどのページに表示されるか**をインタラクティブな HTML で見せる CLI。
+**English** | [日本語](https://github.com/kotta-27/vue-component-graph/blob/main/README.ja.md)
+
+A CLI that statically analyzes a Vue project and shows, as interactive HTML, **how components depend on each other** and **which pages each one appears on**.
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/graph-dark.png">
-  <img alt="PriceTag を選択して、使っている側と表示されるページを確認しているところ" src="docs/graph-light.png">
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/kotta-27/vue-component-graph/main/docs/graph-dark.png">
+  <img alt="PriceTag selected, showing the components that use it and the pages it appears on" src="https://raw.githubusercontent.com/kotta-27/vue-component-graph/main/docs/graph-light.png">
 </picture>
 
-答えられる問い：
+Questions it answers:
 
-- この部品は、どのコンポーネントから使われていて、どの URL に表示されるか
-- この PR の変更で、どのページを確認すればいいか（`--since`）
-- 使われていないコンポーネントや、循環参照はあるか
+- Which components use this one, and on which URLs does it show up?
+- Which pages should I check for the changes in this PR? (`--since`)
+- Are there unused components or circular references?
 
-## クイックスタート
+> [!NOTE]
+> The terminal output, MCP responses and viewer UI are currently in Japanese.
 
-Node.js 20 以上が必要。インストールせずに実行できる。
+## Quick start
+
+Requires Node.js 20 or later. Runs without installing:
 
 ```sh
 cd your-vue-app
 npx vue-component-graph
 ```
 
-チームで使うなら devDependencies に入れておく。
+To share it with your team, add it to devDependencies:
 
 ```sh
 npm install -D vue-component-graph
 ```
 
-解析結果の HTML がブラウザで開く。ターミナルにも要約が出る。
+The analysis opens in your browser as HTML, and a summary is printed to the terminal:
 
 ```
 22 components, 30 edges, 6 routes
@@ -37,15 +42,15 @@ npm install -D vue-component-graph
   src/components/LegacyBanner.vue
 ```
 
-HTML の出力先は `node_modules/.cache/vue-component-graph/graph.html`。`node_modules` が無いときは OS の一時ディレクトリに書く。プロジェクトに未追跡ファイルは増えない。
+The HTML is written to `node_modules/.cache/vue-component-graph/graph.html`, or to the OS temp directory when there is no `node_modules`. No untracked files are added to your project.
 
-## 変更の影響を調べる（`--since`）
+## Change impact (`--since`)
 
 ```sh
 npx vue-component-graph --since main
 ```
 
-`main` との merge-base から今の作業ツリーまでの差分（未コミット・未追跡のファイルを含む）を起点に、import と template での使用を逆に辿る。影響を受けるコンポーネントと、確認すべきページを出す。
+Starting from the diff between the merge-base with `main` and the current working tree (including uncommitted and untracked files), it walks imports and template usage backwards. It lists the affected components and the pages to check.
 
 ```
 変更の影響（main との差分）
@@ -61,24 +66,24 @@ npx vue-component-graph --since main
 ```
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/impact-dark.png">
-  <img alt="usePrice.ts の変更が影響するコンポーネントとページを強調表示しているところ" src="docs/impact-light.png">
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/kotta-27/vue-component-graph/main/docs/impact-dark.png">
+  <img alt="Components and pages affected by a change to usePrice.ts, highlighted" src="https://raw.githubusercontent.com/kotta-27/vue-component-graph/main/docs/impact-light.png">
 </picture>
 
-- `.vue` 以外の変更も辿る（composable、ユーティリティ、`?raw` で読み込むファイルなど）
-- `createApp(App)` の配下にある部品（ヘッダーなど）や、エントリが読み込むグローバル CSS が変わったときは「全ページに影響」と判定する
+- Changes outside `.vue` files are followed too (composables, utilities, files loaded with `?raw`, and so on)
+- A change to a component under `createApp(App)` (such as the header) or to global CSS loaded by the entry is reported as affecting every page
 
-## AI エージェントから使う（MCP）
+## Using it from AI agents (MCP)
 
-MCP サーバーとして起動でき、Claude Code などのエージェントがツールとして呼び出せる。grep では見つからない依存（自動 import、グローバル登録、kebab-case のタグ）や「どの URL に出るか」を、エージェントが正確に調べられる。
+It can run as an MCP server, so agents such as Claude Code can call it as a tool. Agents get accurate answers about dependencies that grep cannot find (auto-imports, global registration, kebab-case tags) and about which URLs a component appears on.
 
-Claude Code の場合：
+For Claude Code:
 
 ```sh
 claude mcp add -s user vue-component-graph -- npx -y vue-component-graph mcp
 ```
 
-ほかのクライアントでは、設定ファイルに次を書く。
+For other clients, add this to the config file:
 
 ```json
 {
@@ -88,19 +93,19 @@ claude mcp add -s user vue-component-graph -- npx -y vue-component-graph mcp
 }
 ```
 
-| ツール | 入力 | 返すもの |
+| Tool | Input | Returns |
 |---|---|---|
-| `component_info` | `component` | 使っている側、使っているもの、表示されるページ、外部コンポーネント |
-| `who_uses` | `component` | 直接の親、祖先、エントリからの経路、表示されるページ |
-| `impact` | `files` または `since` | 影響を受けるコンポーネントと、確認すべきページ |
-| `routes` | なし | ルートごとの画面、親ルート、名前付きビュー、全ページ共通の部品 |
-| `find_issues` | なし | 未使用、循環、再帰、解析の警告 |
+| `component_info` | `component` | Components that use it, components it uses, pages it appears on, external components |
+| `who_uses` | `component` | Direct parents, ancestors, paths from entry points, pages it appears on |
+| `impact` | `files` or `since` | Affected components and the pages to check |
+| `routes` | none | Screen for each route, parent routes, named views, components shared by all pages |
+| `find_issues` | none | Unused components, cycles, recursion, analysis warnings |
 
-- どのツールも `root`（package.json のあるディレクトリ）を受け取る。省略するとサーバーの起動ディレクトリを使う
-- `impact` に `files` を渡すと「これらを変えたら」の見積もりになる。エージェントが変更する前に影響の広さを確かめられる
-- すべて読み取り専用で、ファイルを書き換えない
+- Every tool accepts `root` (the directory containing package.json). If omitted, the server's working directory is used
+- Passing `files` to `impact` gives a "what if I change these" estimate, so an agent can check how far a change reaches before making it
+- All tools are read-only and never modify files
 
-出力の例（`who_uses`、`examples/shop` に対して）：
+Example output (`who_uses` on `examples/shop`):
 
 ```
 PriceTag (src/components/product/PriceTag.vue)
@@ -123,132 +128,132 @@ PriceTag (src/components/product/PriceTag.vue)
   /account/orders  OrdersView
 ```
 
-## 検出できるもの
+## What it detects
 
-### コンポーネント間の依存
+### Dependencies between components
 
-| 書き方 | 例 |
+| Pattern | Example |
 |---|---|
-| 相対パス・エイリアスの import | `import Foo from './Foo.vue'`、tsconfig の `paths`、`@/` `~/` |
-| template のタグ | `<FooBar>`、`<foo-bar>`、`<component :is="cond ? A : B">` |
+| Relative and aliased imports | `import Foo from './Foo.vue'`, tsconfig `paths`, `@/` `~/` |
+| Template tags | `<FooBar>`, `<foo-bar>`, `<component :is="cond ? A : B">` |
 | Options API | `components: { Foo }` |
-| 遅延読み込み | `defineAsyncComponent(() => import('./Foo.vue'))` |
-| グローバル登録 | `app.component('Foo', Foo)` |
-| 自動 import | unplugin-vue-components / Nuxt の `components.d.ts` |
-| Nuxt の components/ | `.nuxt/` が無くても Nuxt の命名規則で解決（`user/Card.vue` → `<UserCard>`、`Lazy` 付き、`#components` からの import） |
-| バレル | `export { default as Foo } from './Foo.vue'` |
-| 再帰 | 自分自身をファイル名で描画するコンポーネント |
+| Lazy loading | `defineAsyncComponent(() => import('./Foo.vue'))` |
+| Global registration | `app.component('Foo', Foo)` |
+| Auto-imports | `components.d.ts` from unplugin-vue-components / Nuxt |
+| Nuxt `components/` | Resolved with Nuxt's naming rules even without `.nuxt/` (`user/Card.vue` → `<UserCard>`, `Lazy` prefix, imports from `#components`) |
+| Barrels | `export { default as Foo } from './Foo.vue'` |
+| Recursion | A component that renders itself by its file name |
 
-template で描画せず import だけしている依存（ルート定義、`h()`、変数経由など）は「import のみ」として区別して表示する。`.vue` を import している `main.ts` や `router.ts` もノードとして出る。
+Dependencies that are imported but not rendered in the template (route definitions, `h()`, via variables, and so on) are shown separately as "import only". Modules such as `main.ts` and `router.ts` that import `.vue` files also appear as nodes.
 
-### ページ（ルート）
+### Pages (routes)
 
-- **vue-router**：`children` のネスト、名前付きビュー（`components: { default, side }`）、`.map()` などで作る動的ルート
-- **Nuxt**：`pages/` のファイルベースルーティング（`[id]`、`[[id]]`、`[...slug]`、`(group)`）
-- **全ページ共通**：`createApp(App)` の配下と、Nuxt の `app.vue` / `layouts/default.vue`
+- **vue-router**: nested `children`, named views (`components: { default, side }`), dynamic routes built with `.map()` and the like
+- **Nuxt**: file-based routing in `pages/` (`[id]`, `[[id]]`, `[...slug]`, `(group)`)
+- **Shared by all pages**: everything under `createApp(App)`, and Nuxt's `app.vue` / `layouts/default.vue`
 
-### 構造の問題
+### Structural issues
 
-- 未使用のコンポーネント（どこからも使われていないもの）
-- 循環参照
-- 外部コンポーネント（ライブラリ由来で、解析対象外のもの）の使用箇所
+- Unused components (not used from anywhere)
+- Circular references
+- Where external components (from libraries, outside the analysis) are used
 
-## ビューアの操作
+## Viewer controls
 
-| 操作 | 内容 |
+| Action | What it does |
 |---|---|
-| ホバー / クリック | そのコンポーネントの祖先と子孫を強調表示する |
-| 詳細パネル | 使っている側、使っているもの、表示されるページ、外部コンポーネント |
-| 「配下だけ表示」「使っている側を表示」 | グラフをその範囲に絞る。概要の数字も絞った範囲で数え直す |
-| 「VS Code で開く」 | ファイルをエディタで開く |
-| タブ | 概要（未使用・循環など）／一覧（親・子・行数でソート）／ページ（ルートごとの画面と部品数） |
-| `/` | 検索 |
-| `F` | 全体を表示 |
-| ドラッグ / ピンチ・Ctrl+ホイール | パン / ズーム |
-| `Esc` | 選択・絞り込みを解除 |
+| Hover / click | Highlights the component's ancestors and descendants |
+| Details panel | Components that use it, components it uses, pages it appears on, external components |
+| 「配下だけ表示」 (descendants only) / 「使っている側を表示」 (users) | Narrows the graph to that scope. Summary counts are recalculated for the narrowed scope |
+| 「VS Code で開く」 (open in VS Code) | Opens the file in your editor |
+| Tabs | Overview (unused, cycles, …) / List (sortable by parents, children, lines) / Pages (screen and component count per route) |
+| `/` | Search |
+| `F` | Fit the whole graph |
+| Drag / pinch or Ctrl+wheel | Pan / zoom |
+| `Esc` | Clear selection and filters |
 
-ライト / ダークモードは OS の設定に従う。
+Light and dark mode follow your OS setting.
 
-## オプション
+## Options
 
 ```
 vue-component-graph [dir] [options]
 ```
 
-| オプション | 説明 |
+| Option | Description |
 |---|---|
-| `-o, --out <file>` | HTML の出力先 |
-| `--focus <name>` | 指定コンポーネントの配下だけを表示 |
-| `--who-uses <name>` | 指定コンポーネントを使っている側だけを表示 |
-| `--since <ref>` | git の `ref` からの変更が影響するコンポーネントとページを出す |
-| `--externals` | ライブラリ等の外部コンポーネントもノードとして表示 |
-| `--json` | HTML の代わりに JSON を標準出力へ |
-| `--no-open` | 生成後にブラウザで開かない |
+| `-o, --out <file>` | Where to write the HTML |
+| `--focus <name>` | Show only the given component and its descendants |
+| `--who-uses <name>` | Show only the components that use the given component |
+| `--since <ref>` | Show components and pages affected by changes since the git `ref` |
+| `--externals` | Also show external components (from libraries) as nodes |
+| `--json` | Print JSON to stdout instead of writing HTML |
+| `--no-open` | Don't open the browser after generating |
 
-`vue-component-graph mcp [--root <dir>]` で MCP サーバー（stdio）として起動する。
+`vue-component-graph mcp [--root <dir>]` starts the MCP server (stdio).
 
-`<name>` はコンポーネント名（`AppHeader`、`app-header`）かパスの末尾（`nav/NavLink`）。複数に一致した場合は候補を表示して終了する。
+`<name>` is a component name (`AppHeader`, `app-header`) or the end of a path (`nav/NavLink`). If several components match, the candidates are printed and the command exits.
 
-## JSON 出力
+## JSON output
 
-`--json` は次の形を出力する。CI やほかのツールと組み合わせるときに使う。
+`--json` prints the following shape. Use it with CI or other tools.
 
 ```ts
 {
   root: string
   nodes: {
-    id: string            // ルートからの相対パス
+    id: string            // path relative to root
     name: string
     kind: 'component' | 'module' | 'external'
-    group: string         // src/ 直下のディレクトリ名
-    entry: boolean        // フレームワークが直接描画する（App.vue、Nuxt の pages/ など）
+    group: string         // directory directly under src/
+    entry: boolean        // rendered directly by the framework (App.vue, Nuxt pages/, …)
     lines: number
-    externals: string[]   // 使っている外部コンポーネント
-    routes: number[]      // 表示されるページ（routes の添字）
-    shell: boolean        // 全ページ共通
+    externals: string[]   // external components it uses
+    routes: number[]      // pages it appears on (indices into routes)
+    shell: boolean        // shared by all pages
   }[]
   edges: { from: string; to: string; type: 'template' | 'script'; async: boolean }[]
   routes: {
     path: string
-    dynamic: boolean      // path が式で、実際の URL は実行時に決まる
-    view: string          // メインの画面
-    layouts: string[]     // 親ルートの画面
-    chain: string[]       // このルートで描画されるルートコンポーネントすべて
-    source: string        // ルートを定義しているファイル
+    dynamic: boolean      // path is an expression; the real URL is decided at runtime
+    view: string          // main screen
+    layouts: string[]     // screens of parent routes
+    chain: string[]       // every route component rendered for this route
+    source: string        // file that defines the route
   }[]
   orphans: string[]
   cycles: string[][]
   recursive: string[]
-  entries: string[]       // createApp() を呼んでいるモジュール
+  entries: string[]       // modules that call createApp()
   warnings: string[]
   impact?: { since: string; changed: string[]; affected: string[]; routes: number[]; everywhere: boolean }
 }
 ```
 
-## 制限
+## Limitations
 
-静的解析なので、実行時にしか決まらないものは分からない。
+This is static analysis, so anything decided only at runtime is unknown.
 
-- **動的なルート**：`path` が式のルート（例：`` `/x/${id}` ``）は 1 件として扱う。実際に何本の URL になるかは分からない
-- **描画関数**：`h()` や JSX / TSX で描画するコンポーネントは、template の依存として検出できない（import されていれば「import のみ」として出る）
-- **Vite のファイルベースルーティング**：vue-router の Vite プラグイン（旧 unplugin-vue-router）や vite-plugin-pages の `src/pages/` からはルートを作らない。ページのコンポーネント自体は解析し、未使用とは判定しない
-- **生成されない `components.d.ts`**：unplugin-vue-components の自動 import は、開発サーバーが生成する `components.d.ts` を読む。リポジトリに含めていないと解決できない。Nuxt は `.nuxt/` が無くても `components/` から推定するが、`nuxt.config` で追加したディレクトリやレイヤーは `nuxi prepare` 後でないと解決できない
-- **プラグイン登録**：プラグインがグローバル登録するコンポーネント（`RouterView` など）は外部コンポーネントとして扱う
-- **template 言語**：pug などの template は解析しない
-- **composable**：composable 自体はグラフのノードにならない（影響分析では辿る）
+- **Dynamic routes**: a route whose `path` is an expression (e.g. `` `/x/${id}` ``) counts as one route. How many real URLs it produces is unknown
+- **Render functions**: components rendered with `h()` or JSX / TSX are not detected as template dependencies (if imported, they show up as "import only")
+- **File-based routing in Vite**: no routes are built from `src/pages/` for vue-router's Vite plugin (formerly unplugin-vue-router) or vite-plugin-pages. The page components themselves are still analyzed and are not reported as unused
+- **`components.d.ts` not committed**: auto-imports from unplugin-vue-components are read from the `components.d.ts` the dev server generates; if it isn't in the repository they can't be resolved. Nuxt is inferred from `components/` even without `.nuxt/`, but directories added in `nuxt.config` and layers are resolved only after `nuxi prepare`
+- **Plugin registration**: components registered globally by plugins (`RouterView`, …) are treated as external components
+- **Template languages**: templates in pug and the like are not analyzed
+- **Composables**: composables are not nodes in the graph (impact analysis does follow them)
 
-## 開発
+## Development
 
 ```sh
-npm install        # prepare で dist/ もビルドされる
+npm install        # prepare also builds dist/
 npm test           # vitest
 npm run typecheck
-npm run demo       # examples/shop を解析して開く
-npm link           # vue-component-graph コマンドとして使う
+npm run demo       # analyze examples/shop and open it
+npm link           # use it as the vue-component-graph command
 ```
 
-`examples/shop` は README のスクリーンショットに使っている架空のショップアプリ。
+`examples/shop` is a fictional shop app used for the README screenshots.
 
-## ライセンス
+## License
 
 [MIT](LICENSE)
