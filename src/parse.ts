@@ -39,6 +39,8 @@ export interface RawRoute {
   dynamic: boolean
   refs: RouteRef[]
   children: RawRoute[]
+  /** `redirect` があり、それ自体は描画しない */
+  redirect: boolean
 }
 
 export interface FileInfo {
@@ -267,7 +269,7 @@ function toRoute(obj: any, code: string): RawRoute | null {
 
   const children: RawRoute[] = []
   if (props.has('children')) findRoutes(props.get('children'), code, children)
-  return { path, dynamic, refs, children }
+  return { path, dynamic, refs, children, redirect: props.has('redirect') }
 }
 
 function propKey(p: any): string | null {

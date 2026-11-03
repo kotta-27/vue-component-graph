@@ -114,8 +114,8 @@ describe('helpers', () => {
 describe('module names', () => {
   it('adds parent directories until the name is unambiguous', () => {
     const g = buildGraph(fileURLToPath(new URL('./fixtures/modules', import.meta.url)))
-    const names = Object.fromEntries(g.nodes.filter((n) => n.kind === 'module').map((n) => [n.id, n.name]))
-    expect(names).toEqual({
+    const labels = Object.fromEntries(g.nodes.filter((n) => n.kind === 'module').map((n) => [n.id, n.label]))
+    expect(labels).toEqual({
       'src/router/index.ts': 'router/index.ts',
       'src/a/setup.ts': 'a/setup.ts',
       'src/b/setup.ts': 'b/setup.ts',

@@ -7,7 +7,10 @@ export type EdgeType = 'template' | 'script'
 
 export interface GraphNode {
   id: string
+  /** コンポーネント名（Foo/index.vue → Foo、自動 import ならディレクトリ名付き）。モジュールはパス */
   name: string
+  /** 表示名。name が他と重なるときは、区別できるまで親ディレクトリを付ける */
+  label: string
   kind: 'component' | 'module' | 'external'
   group: string
   entry: boolean
@@ -56,6 +59,8 @@ export interface Graph {
   /** createApp() を呼んでいるモジュール */
   entries: string[]
   warnings: string[]
+  /** ルートを作れないファイルベースルーティングのディレクトリ（vue-router の Vite プラグインなど） */
+  unsupportedPagesDir?: string
 }
 
 /** ファイル id → そのファイルが import しているファイル id（影響分析用） */
@@ -141,7 +146,8 @@ export function analyze(rootDir: string, options: BuildOptions = {}): { graph: G
     }
     const file = resolveImport(source, importer)
     if (!file) return /^[@\w]/.test(source) && !source.startsWith('@/') ? { external: source, async } : null
-    if (file.endsWith('.vue')) return { file, async }
+    // コンポーネントは default エクスポート。名前付き（型など）は描画の依存ではない（影響分析では deps で辿る）
+    if (file.endsWith('.vue')) return imported === 'default' ? { file, async } : null
     const vue = barrel(file, imported)
     return vue ? { file: vue, async } : null
   }
@@ -159,6 +165,11 @@ export function analyze(rootDir: string, options: BuildOptions = {}): { graph: G
 
   const nodes = new Map<string, GraphNode>()
   const edges = new Map<string, GraphEdge>()
+  // ページをファイルで決める構成では、pages/ のコンポーネントをパスで呼ぶ（index や [id] だらけになるため）
+  const nuxtProject = isNuxt(root)
+  const pagesDir = join(srcDir, 'pages')
+  const fileRouting = nuxtProject || ([...infos.values()].every((i) => !i.routes.length) && existsSync(pagesDir))
+  const nameOf = (file: string) => componentName(relative(srcDir, file), fileRouting)
 
   const addEdge = (from: string, to: string, type: EdgeType, async: boolean) => {
     const key = `${from}\0${to}`
@@ -175,7 +186,8 @@ export function analyze(rootDir: string, options: BuildOptions = {}): { graph: G
     const id = rel(info.file)
     nodes.set(id, {
       id,
-      name: basename(info.file, '.vue'),
+      name: nameOf(info.file),
+      label: '',
       kind: 'component',
       group: groupOf(relative(srcDir, info.file)),
       entry: isFrameworkEntry(relative(srcDir, info.file)),
@@ -188,7 +200,7 @@ export function analyze(rootDir: string, options: BuildOptions = {}): { graph: G
   // 自動 import ではディレクトリ名が名前に付く（components/user/Card.vue → UserCard）
   for (const [key, t] of auto) {
     const n = t.file && !t.async ? nodes.get(rel(t.file)) : undefined
-    if (n && toPascal(n.name) === toPascal(basename(t.file!))) n.name = key
+    if (n && toPascal(n.name) === toPascal(nameOf(t.file!))) n.name = key
   }
 
   for (const info of infos.values()) {
@@ -210,7 +222,12 @@ export function analyze(rootDir: string, options: BuildOptions = {}): { graph: G
         if (t) local.set(toPascal(r.name), { target: t, local: r.local })
       }
       const selfName = toPascal(basename(info.file))
-      const inline = new Set(info.locals.map(toPascal))
+      // <script setup> の変数とタグの対応は Vue と同じ規則にする（shareRequest() は <ShareRequest> ではない）
+      const inline = new Set(info.locals)
+      const isInline = (tag: string) => {
+        const camel = tag.replace(/-(\w)/g, (_, c: string) => c.toUpperCase())
+        return inline.has(tag) || inline.has(camel) || inline.has(camel[0].toUpperCase() + camel.slice(1))
+      }
 
       const use = (name: string, dynamic: boolean) => {
         const key = toPascal(name.split('.')[0])
@@ -223,7 +240,7 @@ export function analyze(rootDir: string, options: BuildOptions = {}): { graph: G
         }
         if (dynamic && !/^[A-Z]/.test(name) && !name.includes('-')) return // :is の変数名など
         if (key === selfName) return addEdge(from, from, 'template', false)
-        if (inline.has(key)) return // 同じファイル内で定義したコンポーネント
+        if (isInline(name.split('.')[0])) return // 同じファイル内で定義したコンポーネント
         const g = globals.get(key) ?? auto.get(key)
         if (g?.file) return addEdge(from, rel(g.file), 'template', g.async)
         if (!dynamic) externals.add(g?.external ? `${key} (${g.external})` : key)
@@ -258,6 +275,7 @@ export function analyze(rootDir: string, options: BuildOptions = {}): { graph: G
     nodes.set(e.from, {
       id: e.from,
       name: e.from.split('/').pop()!,
+      label: '',
       kind: 'module',
       group: 'module',
       entry: true,
@@ -267,22 +285,13 @@ export function analyze(rootDir: string, options: BuildOptions = {}): { graph: G
       shell: false,
     })
   }
-  // index.ts のように名前だけでは区別できないモジュールは、区別できるまで親ディレクトリを付ける
-  const modules = [...nodes.values()].filter((n) => n.kind === 'module')
-  for (const n of modules) {
-    const parts = n.id.split('/')
-    const tail = (id: string, k: number) => id.split('/').slice(-k).join('/')
-    let k = /^index\./.test(parts[parts.length - 1]) ? 2 : 1
-    while (k < parts.length && modules.some((m) => m !== n && tail(m.id, k) === tail(n.id, k))) k++
-    n.name = tail(n.id, k)
-  }
-
   // スキャン対象外（親ディレクトリなど）の .vue
   for (const e of edges.values()) {
     if (nodes.has(e.to)) continue
     nodes.set(e.to, {
       id: e.to,
-      name: basename(e.to, '.vue'),
+      name: nameOf(join(root, e.to)),
+      label: '',
       kind: 'component',
       group: '(outside)',
       entry: false,
@@ -299,13 +308,15 @@ export function analyze(rootDir: string, options: BuildOptions = {}): { graph: G
         const id = `external:${ext}`
         if (!nodes.has(id)) {
           nodes.set(id, {
-            id, name: ext, kind: 'external', group: 'external', entry: false, lines: 0, externals: [], routes: [], shell: false,
+            id, name: ext, label: ext, kind: 'external', group: 'external', entry: false, lines: 0, externals: [], routes: [], shell: false,
           })
         }
         addEdge(n.id, id, 'template', false)
       }
     }
   }
+
+  assignLabels([...nodes.values()])
 
   const edgeList = [...edges.values()]
   const incoming = new Set(edgeList.filter((e) => e.from !== e.to).map((e) => e.to))
@@ -315,6 +326,9 @@ export function analyze(rootDir: string, options: BuildOptions = {}): { graph: G
 
   // ルート定義と createApp() のルート
   const routes: RouteInfo[] = []
+  const wrappers: { index: number; view: string }[] = []
+  /** 画面ごとの、子ルートを持つ親としての使用回数 */
+  const parentUses = new Map<string, number>()
   const shellRoots = new Set<string>()
   const entries = new Set<string>()
   for (const info of infos.values()) {
@@ -337,7 +351,11 @@ export function analyze(rootDir: string, options: BuildOptions = {}): { graph: G
       const view = (own.find((o) => o.view === 'default') ?? own[0])?.id
       // 子ルートの親として渡すのはメインの画面だけ（名前付きビューは子に引き継がない）
       const layouts = view ? [...parentChain, view] : parentChain
-      if (view) {
+      if (view && r.children.length) parentUses.set(view, (parentUses.get(view) ?? 0) + 1)
+      // redirect のあるルートはそれ自体を描画しない（子ルートのレイアウトとしては使う）
+      if (view && !r.redirect) {
+        // 子があり、空パスの子がない親ルートは、レイアウトだけの可能性がある（判定は全ルートを見てから）
+        if (r.children.length && !r.children.some((c) => c.path === '')) wrappers.push({ index: routes.length, view })
         routes.push({
           path,
           dynamic,
@@ -350,6 +368,14 @@ export function analyze(rootDir: string, options: BuildOptions = {}): { graph: G
       for (const c of r.children) add(c, layouts, path, dynamic)
     }
     for (const r of info.routes) add(r, [], '', false)
+  }
+  // 複数の親ルートで使われている画面はレイアウト（管理画面の Layout など）。その親ルート自体はページに数えない。
+  // 1 か所でしか使われない親（一覧の /users に詳細の :id がぶら下がる形など）はページとして残す
+  const layoutOnly = new Set(wrappers.filter((w) => parentUses.get(w.view)! > 1).map((w) => w.index))
+  if (layoutOnly.size) {
+    const kept = routes.filter((_, i) => !layoutOnly.has(i))
+    routes.length = 0
+    routes.push(...kept)
   }
   const nuxt = nuxtRoutes(root, srcDir, rel)
   if (nuxt) {
@@ -410,6 +436,7 @@ export function analyze(rootDir: string, options: BuildOptions = {}): { graph: G
     entries: [...entries],
     warnings,
   }
+  if (!routes.length && fileRouting && !nuxtProject) graph.unsupportedPagesDir = rel(pagesDir)
   return { graph, deps }
 }
 
@@ -595,6 +622,41 @@ function loadAutoImports(root: string): Map<string, Target> {
   return map
 }
 
+/** Foo/index.vue → Foo。ファイルベースルーティングの pages/ はパスのまま（pages/users/[id]） */
+function componentName(pathFromSrc: string, fileRouting: boolean): string {
+  const p = pathFromSrc.split(sep).join('/').replace(/\.vue$/, '')
+  if (fileRouting && p.startsWith('pages/')) return p
+  const parts = p.split('/')
+  const base = parts[parts.length - 1]
+  return base === 'index' && parts.length > 1 ? parts[parts.length - 2] : base
+}
+
+/**
+ * 表示名を決める。名前が重なるもの（components/a/Item.vue と b/Item.vue、index.ts どうしなど）は、
+ * 区別できるまで親ディレクトリを付ける。index.* のモジュールは単独でもディレクトリを付ける
+ */
+function assignLabels(nodes: GraphNode[]) {
+  const trimmed = (n: GraphNode) => (n.kind === 'component' ? n.id.replace(/\.vue$/, '').replace(/\/index$/, '') : n.id)
+  const tail = (n: GraphNode, k: number) => trimmed(n).split('/').slice(-k).join('/')
+  const groups = new Map<string, GraphNode[]>()
+  for (const n of nodes) {
+    if (n.kind === 'external') continue
+    const key = n.name.toLowerCase()
+    groups.set(key, [...(groups.get(key) ?? []), n])
+  }
+  for (const group of groups.values()) {
+    for (const n of group) {
+      const depth = trimmed(n).split('/').length
+      let k = n.kind === 'module' && /^index\./.test(n.name) ? 2 : 1
+      if (group.length > 1) {
+        k = Math.max(k, 2)
+        while (k < depth && group.some((m) => m !== n && tail(m, k) === tail(n, k))) k++
+      }
+      n.label = k === 1 ? n.name : tail(n, k)
+    }
+  }
+}
+
 function groupOf(pathFromSrc: string): string {
   const parts = pathFromSrc.split(sep)
   return parts.length > 1 && parts[0] !== '..' ? parts[0] : '(root)'
@@ -679,5 +741,9 @@ export function findNodes(graph: Graph, query: string): GraphNode[] {
   if (exact.length) return exact
   const byName = graph.nodes.filter((n) => toPascal(n.name) === toPascal(q))
   if (byName.length) return byName
-  return graph.nodes.filter((n) => n.id.endsWith('/' + q) || n.id.endsWith('/' + q + '.vue'))
+  const byLabel = graph.nodes.filter((n) => n.label === q)
+  if (byLabel.length) return byLabel
+  return graph.nodes.filter(
+    (n) => n.id.endsWith('/' + q) || n.id.endsWith('/' + q + '.vue') || n.id.endsWith('/' + q + '/index.vue'),
+  )
 }

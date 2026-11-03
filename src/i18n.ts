@@ -45,7 +45,13 @@ const ja = {
   filesParam: '変更する（した）ファイル。root からの相対パスか絶対パス',
   sinceParam: '比較する git ref（main、HEAD など）',
   noDir: (dir: string) => `ディレクトリがありません: ${dir}`,
-  noPackageJson: (dir: string) => `${dir} に package.json がありません。Vue プロジェクトのルートを root で指定してください`,
+  notDir: (path: string) => `ディレクトリではありません: ${path}`,
+  noPackageJson: (dir: string) =>
+    `${dir} に package.json がありません。Vue プロジェクトのルート（package.json のあるディレクトリ）を指定してください`,
+  noPackageJsonNearest: (dir: string, nearest: string) =>
+    `${dir} に package.json がありません。プロジェクトのルートは ${nearest} ではありませんか。` +
+    'サブディレクトリだけを解析すると、ルート定義などが範囲外になり、使われている部品を「未使用」と誤判定します',
+  langInvalid: (value: string) => `--lang には ja か en を指定してください（指定された値: ${value}）`,
   filesOrSince: 'files か since のどちらかを指定してください',
 
   // MCP のツール説明
@@ -75,13 +81,15 @@ const ja = {
   ignoredFiles: (files: string[]) => `解析対象外として無視したファイル: ${files.join(', ')}`,
   pages: (n: number) => `ページ (${n})`,
   noRouteDefs: 'ルート定義が見つかりません',
+  unsupportedPages: (dir: string) =>
+    `ルート定義が見つかりません。${dir}/ はファイルベースルーティング（vue-router の Vite プラグイン、vite-plugin-pages など）と思われますが、まだ対応していません（ページのコンポーネント自体は解析しています）`,
+  unreachable: 'どのルートからも辿れない',
   parentRoutes: (names: string[]) => `親: ${names.join(' > ')}`,
   namedViews: (names: string[]) => `名前付きビュー: ${names.join(', ')}`,
   routeNotes: (notes: string[]) => `（${notes.join(' / ')}）`,
   sharedByAll: (names: string[]) => `全ページ共通: ${names.join(', ')}`,
   pagesShell: '表示されるページ: 全ページ（App や共通レイアウトの配下で常に表示）',
-  pagesNone: (hasRoutes: boolean) =>
-    `表示されるページ: なし（${hasRoutes ? 'どのルートからも辿れない' : 'ルート定義が見つからない'}）`,
+  pagesNone: (reason: string) => `表示されるページ: なし（${reason}）`,
   pagesOf: (n: number) => `表示されるページ (${n}):`,
   importOnly: 'import のみ',
   lazy: '遅延読み込み',
@@ -140,7 +148,12 @@ const en: Messages = {
   filesParam: 'Files to change (or changed), relative to root or absolute',
   sinceParam: 'git ref to compare with (main, HEAD, …)',
   noDir: (dir) => `Directory not found: ${dir}`,
-  noPackageJson: (dir) => `No package.json in ${dir}. Pass the Vue project root as root`,
+  notDir: (path) => `Not a directory: ${path}`,
+  noPackageJson: (dir) => `No package.json in ${dir}. Point it at the root of a Vue project (the directory with package.json)`,
+  noPackageJsonNearest: (dir, nearest) =>
+    `No package.json in ${dir}. Did you mean the project root ${nearest}? ` +
+    'Analyzing only a subdirectory leaves route definitions and other users out of scope, so used components would be reported as unused',
+  langInvalid: (value) => `--lang must be ja or en (got: ${value})`,
   filesOrSince: 'Pass either files or since',
 
   componentInfoTitle: 'Component details',
@@ -168,12 +181,15 @@ const en: Messages = {
   ignoredFiles: (files) => `Ignored (not part of the analysis): ${files.join(', ')}`,
   pages: (n) => `Pages (${n})`,
   noRouteDefs: 'No route definitions found',
+  unsupportedPages: (dir) =>
+    `No route definitions found. ${dir}/ looks like file-based routing (vue-router's Vite plugin, vite-plugin-pages, …), which isn't supported yet (the page components themselves are still analyzed)`,
+  unreachable: 'not reachable from any route',
   parentRoutes: (names) => `parent: ${names.join(' > ')}`,
   namedViews: (names) => `named views: ${names.join(', ')}`,
   routeNotes: (notes) => ` (${notes.join(' / ')})`,
   sharedByAll: (names) => `On every page: ${names.join(', ')}`,
   pagesShell: 'Pages: every page (always rendered under App or a shared layout)',
-  pagesNone: (hasRoutes) => `Pages: none (${hasRoutes ? 'not reachable from any route' : 'no route definitions found'})`,
+  pagesNone: (reason) => `Pages: none (${reason})`,
   pagesOf: (n) => `Pages (${n}):`,
   importOnly: 'import only',
   lazy: 'lazy',
@@ -202,11 +218,23 @@ export function getLang(): Lang {
   return current
 }
 
+export const isLang = (v: unknown): v is Lang => v === 'ja' || v === 'en'
+
+/** --lang の値（未指定なら undefined） */
+export function langFlag(argv: string[] = process.argv): string | undefined {
+  const i = argv.indexOf('--lang')
+  return i >= 0 ? argv[i + 1] : argv.find((a) => a.startsWith('--lang='))?.slice('--lang='.length)
+}
+
+/** --lang か VUE_COMPONENT_GRAPH_LANG で明示された言語。ビューアの初期表示にも使う */
+export function explicitLang(argv: string[] = process.argv, env: NodeJS.ProcessEnv = process.env): Lang | undefined {
+  return [langFlag(argv), env.VUE_COMPONENT_GRAPH_LANG].find(isLang)
+}
+
 /** --lang、VUE_COMPONENT_GRAPH_LANG、LC_ALL / LC_MESSAGES / LANG の順に見る */
 export function detectLang(argv: string[] = process.argv, env: NodeJS.ProcessEnv = process.env): Lang {
-  const i = argv.indexOf('--lang')
-  const flag = i >= 0 ? argv[i + 1] : argv.find((a) => a.startsWith('--lang='))?.slice('--lang='.length)
-  for (const v of [flag, env.VUE_COMPONENT_GRAPH_LANG]) if (v === 'ja' || v === 'en') return v
+  const explicit = explicitLang(argv, env)
+  if (explicit) return explicit
   const locale = env.LC_ALL || env.LC_MESSAGES || env.LANG || ''
   return /^ja/i.test(locale) ? 'ja' : 'en'
 }

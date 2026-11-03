@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs'
 import { basename } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { Direction, Graph } from './graph'
+import type { Lang } from './i18n'
 import type { Impact } from './impact'
 
 // dist/cli.js からも src/html.ts からも ../viewer を指す
@@ -10,12 +11,14 @@ const viewerDir = fileURLToPath(new URL('../viewer/', import.meta.url))
 export interface ViewerOptions {
   initialFocus?: { id: string; dir: Direction }
   impact?: Impact
+  /** --lang などで明示された言語。ビューアの初期表示に使う */
+  lang?: Lang
 }
 
-export function renderHtml(graph: Graph, { initialFocus, impact }: ViewerOptions = {}): string {
+export function renderHtml(graph: Graph, { initialFocus, impact, lang }: ViewerOptions = {}): string {
   const read = (name: string) => readFileSync(viewerDir + name, 'utf8')
   // </script> などで JSON が script 要素を抜けないようにする
-  const data = JSON.stringify({ ...graph, initialFocus, impact }).replace(/</g, '\\u003c')
+  const data = JSON.stringify({ ...graph, initialFocus, impact, lang }).replace(/</g, '\\u003c')
   const parts: Record<string, string> = {
     '__TITLE__': escapeHtml(basename(graph.root)),
     '/*__CSS__*/': read('viewer.css'),

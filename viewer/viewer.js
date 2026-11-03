@@ -32,7 +32,7 @@
       recursive: '再帰',
       changedFiles: '変更したファイル',
       affected: '影響を受ける',
-      focusBar: (name, dir, n) => `<strong>${name}</strong> の${dir === 'down' ? '配下（使っているもの）' : '使っている側'}を表示中（${n} 件）`,
+      focusBar: (name, dir) => `<strong>${name}</strong> の${dir === 'down' ? '配下（使っているもの）' : '使っている側'}を表示中`,
       showAll: '全体に戻す',
       tabOverview: '概要',
       tabList: '一覧',
@@ -71,6 +71,8 @@
       unreachable: 'ルートから辿れない',
       noRoutes: 'ルート定義が見つからない',
       noRoutesFound: 'ルート定義が見つかりませんでした',
+      unsupportedPages: (dir) =>
+        `${dir}/ はファイルベースルーティング（vue-router の Vite プラグイン、vite-plugin-pages など）と思われますが、まだ対応していません。ページのコンポーネント自体は解析しています`,
       sharedByAll: (names) => `全ページ共通：${names.join('、')}`,
       colPath: 'パス',
       colScreen: '画面',
@@ -109,8 +111,7 @@
       recursive: 'Recursive',
       changedFiles: 'Changed files',
       affected: 'Affected',
-      focusBar: (name, dir, n) =>
-        dir === 'down' ? `Showing what <strong>${name}</strong> uses (${n})` : `Showing what uses <strong>${name}</strong> (${n})`,
+      focusBar: (name, dir) => (dir === 'down' ? `Showing what <strong>${name}</strong> uses` : `Showing what uses <strong>${name}</strong>`),
       showAll: 'Show all',
       tabOverview: 'Overview',
       tabList: 'List',
@@ -150,6 +151,8 @@
       unreachable: 'Not reachable from any route',
       noRoutes: 'No route definitions found',
       noRoutesFound: 'No route definitions found',
+      unsupportedPages: (dir) =>
+        `${dir}/ looks like file-based routing (vue-router's Vite plugin, vite-plugin-pages, …), which isn't supported yet. The page components themselves are still analyzed`,
       sharedByAll: (names) => `On every page: ${names.join(', ')}`,
       colPath: 'Path',
       colScreen: 'Screen',
@@ -166,6 +169,7 @@
   }
   const LANG_KEY = 'vue-component-graph:lang'
   let lang = (() => {
+    if (DATA.lang in MESSAGES) return DATA.lang
     try {
       const saved = localStorage.getItem(LANG_KEY)
       if (saved in MESSAGES) return saved
@@ -272,7 +276,7 @@
   }
 
   function nodeWidth(n) {
-    let w = BAR_W + PAD_X * 2 + textWidth(n.name, n.kind === 'module')
+    let w = BAR_W + PAD_X * 2 + textWidth(n.label, n.kind === 'module')
     if (orphanSet.has(n.id)) w += WARN_W
     return Math.ceil(w)
   }
@@ -500,7 +504,7 @@
         el('rect', { class: 'bar', x: 0.5, y: 0.5, width: BAR_W, height: NODE_H - 1, rx: 2, fill: colorOf(n) }, g)
       }
       const t = el('text', { x: BAR_W + PAD_X, y: NODE_H / 2 }, g)
-      t.textContent = n.name
+      t.textContent = n.label
       if (orphanSet.has(n.id)) {
         const cx = p.w - PAD_X - 6
         el('circle', { class: 'warn', cx, cy: NODE_H / 2, r: 6.5 }, g)
@@ -658,7 +662,7 @@
     const meta = [t('metaParents', parentsOf.get(id).length), t('metaChildren', childrenOf.get(id).length)]
     if (n.lines) meta.push(t('metaLines', n.lines))
     tooltip.innerHTML =
-      `<div class="t-name">${esc(n.name)}</div><div class="t-path">${esc(n.id)}</div>` +
+      `<div class="t-name">${esc(n.label)}</div><div class="t-path">${esc(n.id)}</div>` +
       `<div class="t-meta">${meta.join(' · ')}</div>` +
       statusHtml(id)
     tooltip.hidden = false
@@ -708,7 +712,7 @@
     }
     const n = nodeById.get(state.focus.id)
     bar.hidden = false
-    bar.innerHTML = `<span>${t('focusBar', esc(n.name), state.focus.dir, nodes.length - 1)}</span><button type="button" data-unfocus>${t('showAll')}</button>`
+    bar.innerHTML = `<span>${t('focusBar', esc(n.label), state.focus.dir)}</span><button type="button" data-unfocus>${t('showAll')}</button>`
   }
 
   // ---------- サイドパネル ----------
@@ -729,7 +733,7 @@
   function nodeItem(id, tags = []) {
     const n = nodeById.get(id)
     const tagHtml = tags.map((x) => `<span class="tag">${x}</span>`).join('')
-    return `<li class="link" data-select="${esc(id)}" title="${esc(id)}"><span class="dot" style="background:${colorOf(n)}"></span>${esc(n.name)}${tagHtml}</li>`
+    return `<li class="link" data-select="${esc(id)}" title="${esc(id)}"><span class="dot" style="background:${colorOf(n)}"></span>${esc(n.label)}${tagHtml}</li>`
   }
 
   function edgeTags(e) {
@@ -781,7 +785,7 @@
     let h = impactHtml()
     if (state.focus) {
       const n = nodeById.get(state.focus.id)
-      h += `<p class="scope">${t('scopeFocus', esc(n.name), state.focus.dir)}</p>`
+      h += `<p class="scope">${t('scopeFocus', esc(n.label), state.focus.dir)}</p>`
     }
     h += '<div class="kpis">'
     h += kpi(sc.components.length, sc.total.components, t('kpiComponents'))
@@ -830,8 +834,8 @@
     const rows = sc.components.map((n) => ({ n, parents: parentsOf.get(n.id).length, children: childrenOf.get(n.id).length, lines: n.lines }))
     const { key, desc } = state.sort
     rows.sort((a, b) => {
-      const v = key === 'name' ? a.n.name.localeCompare(b.n.name) : a[key] - b[key]
-      return (desc ? -v : v) || a.n.name.localeCompare(b.n.name)
+      const v = key === 'name' ? a.n.label.localeCompare(b.n.label) : a[key] - b[key]
+      return (desc ? -v : v) || a.n.label.localeCompare(b.n.label)
     })
     const th = (k, label, num) => {
       const arrow = key === k ? (desc ? ' ↓' : ' ↑') : ''
@@ -844,7 +848,7 @@
     for (const r of rows) {
       h +=
         `<tr class="row" data-select="${esc(r.n.id)}" title="${esc(r.n.id)}">` +
-        `<td class="name"><span class="dot" style="background:${colorOf(r.n)}"></span>${esc(r.n.name)}</td>` +
+        `<td class="name"><span class="dot" style="background:${colorOf(r.n)}"></span>${esc(r.n.label)}</td>` +
         `<td class="num">${r.parents}</td><td class="num">${r.children}</td><td class="num">${r.lines}</td></tr>`
     }
     return h + '</tbody></table>'
@@ -856,7 +860,7 @@
     const parents = parentsOf.get(id)
     const children = childrenOf.get(id)
     let h = `<button type="button" data-back>${t('backToOverview')}</button>`
-    h += `<h2 style="margin-top:12px">${esc(n.name)}</h2><div class="path">${esc(n.id)}</div>`
+    h += `<h2 style="margin-top:12px">${esc(n.label)}</h2><div class="path">${esc(n.id)}</div>`
     h += statusHtml(id)
     const meta = []
     if (n.kind === 'component') meta.push(t('group', esc(n.group)))
@@ -891,11 +895,11 @@
   function routeItem(i) {
     const r = DATA.routes[i]
     const page = nodeById.get(r.view)
-    return `<li class="link route" data-select="${esc(page.id)}" title="${esc(r.chain.join(' > '))}"><span class="rpath">${routeLabel(r)}</span><span class="rcomp">${esc(page.name)}</span></li>`
+    return `<li class="link route" data-select="${esc(page.id)}" title="${esc(r.chain.join(' > '))}"><span class="rpath">${routeLabel(r)}</span><span class="rcomp">${esc(page.label)}</span></li>`
   }
 
   function shellNames() {
-    return DATA.nodes.filter((n) => n.shell).map((n) => n.name)
+    return DATA.nodes.filter((n) => n.shell).map((n) => n.label)
   }
 
   function pagesOfHtml(n) {
@@ -903,13 +907,17 @@
       return `<h3>${t('pages')}</h3><p class="note">${t('shellNote', esc(shellNames()[0] || 'App'))}</p>`
     }
     if (!n.routes.length) {
-      return `<h3>${t('pages')}</h3><p class="empty">${DATA.routes.length ? t('unreachable') : t('noRoutes')}</p>`
+      return `<h3>${t('pages')}</h3><p class="empty">${DATA.routes.length ? t('unreachable') : noRoutesText()}</p>`
     }
     return `<h3>${t('pagesN', n.routes.length)}</h3><ul>${n.routes.map(routeItem).join('')}</ul>`
   }
 
+  function noRoutesText() {
+    return DATA.unsupportedPagesDir ? t('unsupportedPages', esc(DATA.unsupportedPagesDir)) : t('noRoutesFound')
+  }
+
   function pagesHtml() {
-    if (!DATA.routes.length) return `<p class="empty">${t('noRoutesFound')}</p>`
+    if (!DATA.routes.length) return `<p class="empty">${noRoutesText()}</p>`
     const counts = DATA.routes.map(() => 0)
     for (const n of DATA.nodes) if (n.kind === 'component') for (const i of n.routes) counts[i]++
     let h = ''
@@ -921,7 +929,7 @@
       const hit = IMPACT && state.showImpact && IMPACT.routes.includes(i)
       h +=
         `<tr class="row${hit ? ' impacted' : ''}" data-select="${esc(page.id)}" title="${esc(r.chain.join(' > '))}">` +
-        `<td class="name">${routeLabel(r)}</td><td>${esc(page.name)}</td><td class="num">${counts[i]}</td></tr>`
+        `<td class="name">${routeLabel(r)}</td><td>${esc(page.label)}</td><td class="num">${counts[i]}</td></tr>`
     })
     return h + '</tbody></table>'
   }
@@ -988,11 +996,13 @@
   const norm = (s) => s.toLowerCase().replace(/[-_\s]/g, '')
   function searchNodes(q) {
     const nq = norm(q)
-    const hits = DATA.nodes.filter((n) => norm(n.name).includes(nq) || n.id.toLowerCase().includes(q.toLowerCase()))
+    const hits = DATA.nodes.filter(
+      (n) => norm(n.name).includes(nq) || norm(n.label).includes(nq) || n.id.toLowerCase().includes(q.toLowerCase()),
+    )
     return hits.sort((a, b) => {
       const sa = norm(a.name).startsWith(nq) ? 0 : 1
       const sb = norm(b.name).startsWith(nq) ? 0 : 1
-      return sa - sb || a.name.length - b.name.length || a.name.localeCompare(b.name)
+      return sa - sb || a.label.length - b.label.length || a.label.localeCompare(b.label)
     })
   }
 
@@ -1004,7 +1014,7 @@
     results.innerHTML = hits
       .map(
         (n, i) =>
-          `<li role="option" data-id="${esc(n.id)}" aria-selected="${i === resultIndex}"><span class="dot" style="background:${colorOf(n)}"></span>${esc(n.name)}<span class="path">${esc(n.id)}</span></li>`,
+          `<li role="option" data-id="${esc(n.id)}" aria-selected="${i === resultIndex}"><span class="dot" style="background:${colorOf(n)}"></span>${esc(n.label)}<span class="path">${esc(n.id)}</span></li>`,
       )
       .join('')
   }

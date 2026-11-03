@@ -17,7 +17,7 @@ Vue プロジェクトを静的解析して、**コンポーネントの依存�
 
 ## クイックスタート
 
-Node.js 20 以上が必要。インストールせずに実行できる。
+Node.js 20 以上が必要。Vue プロジェクトのルート（package.json のあるディレクトリ）で、インストールせずに実行できる。
 
 ```sh
 cd your-vue-app
@@ -37,6 +37,13 @@ npm install -D vue-component-graph
 
 未使用 (1)
   src/components/LegacyBanner.vue
+```
+
+特定のコンポーネントについて知りたいときは名前を渡す。結果がターミナルに出て、ビューアもそのコンポーネントに絞った状態で開く。
+
+```sh
+npx vue-component-graph --who-uses PriceTag   # 使っている側、ルートからの経路、表示されるページ
+npx vue-component-graph --focus ProductCard   # 親・子・表示されるページ
 ```
 
 HTML の出力先は `node_modules/.cache/vue-component-graph/graph.html`。`node_modules` が無いときは OS の一時ディレクトリに書く。プロジェクトに未追跡ファイルは増えない。
@@ -141,11 +148,13 @@ PriceTag (src/components/product/PriceTag.vue)
 | バレル | `export { default as Foo } from './Foo.vue'` |
 | 再帰 | 自分自身をファイル名で描画するコンポーネント |
 
-template で描画せず import だけしている依存（ルート定義、`h()`、変数経由など）は「import のみ」として区別して表示する。`.vue` を import している `main.ts` や `router.ts` もノードとして出る。
+template で描画せず import だけしている依存（ルート定義、`h()`、変数経由など）は「import のみ」として区別して表示する。`.vue` からの名前付き import（エクスポートした型など）はコンポーネントの依存として数えない（`--since` では辿る）。`.vue` を import している `main.ts` や `router.ts` もノードとして出る。
+
+コンポーネント名は Vue と同じ規則で決める。`SvgIcon/index.vue` は `SvgIcon`、Nuxt の `components/user/Card.vue` は `UserCard`。名前が重なるときは、区別できるまでディレクトリを付けて表示する（`a/Item`、`b/Item`）。ファイルベースルーティングのページはパスで表示する（`pages/users/[id]`）。
 
 ### ページ（ルート）
 
-- **vue-router**：`children` のネスト、名前付きビュー（`components: { default, side }`）、`.map()` などで作る動的ルート
+- **vue-router**：`children` のネスト、名前付きビュー（`components: { default, side }`）、`.map()` などで作る動的ルート。`redirect` のある親ルートはページとして数えない
 - **Nuxt**：`pages/` のファイルベースルーティング（`[id]`、`[[id]]`、`[...slug]`、`(group)`）
 - **全ページ共通**：`createApp(App)` の配下と、Nuxt の `app.vue` / `layouts/default.vue`
 
@@ -180,8 +189,8 @@ vue-component-graph [dir] [options]
 | オプション | 説明 |
 |---|---|
 | `-o, --out <file>` | HTML の出力先 |
-| `--focus <name>` | 指定コンポーネントの配下だけを表示 |
-| `--who-uses <name>` | 指定コンポーネントを使っている側だけを表示 |
+| `--focus <name>` | 指定コンポーネントの配下だけを表示（詳細もターミナルに出す） |
+| `--who-uses <name>` | 指定コンポーネントを使っている側だけを表示（結果もターミナルに出す） |
 | `--since <ref>` | git の `ref` からの変更が影響するコンポーネントとページを出す |
 | `--externals` | ライブラリ等の外部コンポーネントもノードとして表示 |
 | `--json` | HTML の代わりに JSON を標準出力へ |
@@ -192,7 +201,9 @@ vue-component-graph [dir] [options]
 
 ターミナルと MCP の出力は日本語と英語に対応している。`--lang`、環境変数 `VUE_COMPONENT_GRAPH_LANG`、ロケール（`LANG` など）の順に決まる。OS の言語が英語の環境で日本語にしたいときは `--lang ja` を付けるか、`VUE_COMPONENT_GRAPH_LANG=ja` を設定する。
 
-`<name>` はコンポーネント名（`AppHeader`、`app-header`）かパスの末尾（`nav/NavLink`）。複数に一致した場合は候補を表示して終了する。
+`<name>` はコンポーネント名（`AppHeader`、`app-header`）かパスの末尾（`nav/NavLink`）。複数に一致した場合は候補を表示して終了する。一致しない場合は似た名前を提案する。
+
+結果は標準出力、エラーは標準エラー出力に出す。`npx vue-component-graph --since main > impact.txt` でファイルに保存できる。
 
 ## JSON 出力
 
@@ -203,7 +214,8 @@ vue-component-graph [dir] [options]
   root: string
   nodes: {
     id: string            // ルートからの相対パス
-    name: string
+    name: string          // コンポーネント名（Foo/index.vue → Foo）。モジュールはパス
+    label: string         // 表示名。名前が重なるときはディレクトリを付ける
     kind: 'component' | 'module' | 'external'
     group: string         // src/ 直下のディレクトリ名
     entry: boolean        // フレームワークが直接描画する（App.vue、Nuxt の pages/ など）
@@ -226,6 +238,7 @@ vue-component-graph [dir] [options]
   recursive: string[]
   entries: string[]       // createApp() を呼んでいるモジュール
   warnings: string[]
+  unsupportedPagesDir?: string  // 読み取れないファイルベースルーティングのディレクトリ
   impact?: { since: string; changed: string[]; affected: string[]; routes: number[]; everywhere: boolean }
 }
 ```
@@ -236,7 +249,9 @@ vue-component-graph [dir] [options]
 
 - **動的なルート**：`path` が式のルート（例：`` `/x/${id}` ``）は 1 件として扱う。実際に何本の URL になるかは分からない
 - **描画関数**：`h()` や JSX / TSX で描画するコンポーネントは、template の依存として検出できない（import されていれば「import のみ」として出る）
-- **Vite のファイルベースルーティング**：vue-router の Vite プラグイン（旧 unplugin-vue-router）や vite-plugin-pages の `src/pages/` からはルートを作らない。ページのコンポーネント自体は解析し、未使用とは判定しない
+- **Vite のファイルベースルーティング**：vue-router の Vite プラグイン（旧 unplugin-vue-router）や vite-plugin-pages の `src/pages/` からはルートを作らない。その旨を出力し、ページのコンポーネント自体は解析して、未使用とは判定しない
+- **モノレポ**：パッケージごとに実行する。ほかのパッケージからの import は見えないので、別パッケージだけが使う部品は未使用と出る
+- **Vue 2**：Vue 3 の SFC コンパイラで解析する。結果は使えるが、Vue 3 で廃止された構文（`<template functional>` など）は解析の警告として出る
 - **生成されない `components.d.ts`**：unplugin-vue-components の自動 import は、開発サーバーが生成する `components.d.ts` を読む。リポジトリに含めていないと解決できない。Nuxt は `.nuxt/` が無くても `components/` から推定するが、`nuxt.config` で追加したディレクトリやレイヤーは `nuxi prepare` 後でないと解決できない
 - **プラグイン登録**：プラグインがグローバル登録するコンポーネント（`RouterView` など）は外部コンポーネントとして扱う
 - **template 言語**：pug などの template は解析しない
@@ -252,7 +267,7 @@ npm run demo       # examples/shop を解析して開く
 npm link           # vue-component-graph コマンドとして使う
 ```
 
-`examples/shop` は README のスクリーンショットに使っている架空のショップアプリ。
+`examples/shop`（リポジトリにあり、npm パッケージには含まない）は README のスクリーンショットに使っている架空のショップアプリ。
 
 ## ライセンス
 

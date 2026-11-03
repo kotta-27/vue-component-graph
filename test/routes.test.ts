@@ -1,7 +1,7 @@
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { buildGraph } from '../src/graph'
-import { whoUses } from '../src/mcp'
+import { whoUses } from '../src/report'
 
 const fixture = (name: string) => fileURLToPath(new URL(`./fixtures/${name}`, import.meta.url))
 
@@ -95,7 +95,7 @@ describe('Nuxt without .nuxt/ (fresh clone, CI)', () => {
   })
 
   it('uses registered names in who_uses paths', () => {
-    expect(whoUses(graph, 'BaseButton')).toContain('  index → UserCard → BaseButton')
+    expect(whoUses(graph, 'BaseButton')).toContain('  pages/index → UserCard → BaseButton')
   })
 
   it('treats Nuxt built-ins as external', () => {

@@ -9,7 +9,7 @@ export function nameOf(graph: Graph, id: string): string {
   let byId = nodeIndex.get(graph)
   if (!byId) nodeIndex.set(graph, (byId = new Map(graph.nodes.map((n) => [n.id, n]))))
   const n = byId.get(id)
-  if (n?.kind === 'component') return n.name
+  if (n?.kind === 'component') return n.label
   return n ? id : id.split('/').pop()!.replace(/\.vue$/, '')
 }
 
@@ -39,8 +39,11 @@ export function impactLines(graph: Graph, impact: Impact, label: string): string
   if (!impact.changed.length) return [...out, `  ${t('impactNone')}`]
   out.push(`  ${t('changedFiles', impact.changed.length)}`)
   for (const id of impact.changed) out.push(`    ${id}`)
-  out.push(`  ${t('affectedComponents', impact.affected.length)}`)
-  if (impact.affected.length) out.push(`    ${impact.affected.map((id) => nameOf(graph, id)).join(', ')}`)
+  // 変更したファイル自体は上に出ているので、影響を受ける側だけを数える（ビューアと同じ）
+  const changed = new Set(impact.changed)
+  const affected = impact.affected.filter((id) => !changed.has(id))
+  out.push(`  ${t('affectedComponents', affected.length)}`)
+  if (affected.length) out.push(`    ${affected.map((id) => nameOf(graph, id)).join(', ')}`)
   out.push(`  ${t('pagesToCheck', impact.routes.length)}${impact.everywhere ? t('everywhere') : ''}`)
   for (const line of routeLines(graph, impact.routes)) out.push(`    ${line}`)
   return out

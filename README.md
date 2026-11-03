@@ -15,11 +15,11 @@ Questions it answers:
 - Which pages should I check for the changes in this PR? (`--since`)
 - Are there unused components or circular references?
 
-Available in English and Japanese. The CLI and MCP server use `--lang`, then `VUE_COMPONENT_GRAPH_LANG`, then your locale (`LANG`, …). The viewer follows your browser's language and has a switch button. The example outputs below are in Japanese.
+Available in English and Japanese. The CLI and MCP server use `--lang`, then `VUE_COMPONENT_GRAPH_LANG`, then your locale (`LANG`, …). The viewer follows `--lang` if given, otherwise your browser's language, and has a switch button.
 
 ## Quick start
 
-Requires Node.js 20 or later. Runs without installing:
+Requires Node.js 20 or later. Run it in the root of your Vue project (the directory with package.json); no install needed:
 
 ```sh
 cd your-vue-app
@@ -37,8 +37,15 @@ The analysis opens in your browser as HTML, and a summary is printed to the term
 ```
 22 components, 30 edges, 6 routes
 
-未使用 (1)
+Unused (1)
   src/components/LegacyBanner.vue
+```
+
+To ask about one component, name it. The answer is printed and the viewer opens narrowed to it:
+
+```sh
+npx vue-component-graph --who-uses PriceTag   # what uses it, paths from the routes, pages it appears on
+npx vue-component-graph --focus ProductCard   # its parents, children and pages
 ```
 
 The HTML is written to `node_modules/.cache/vue-component-graph/graph.html`, or to the OS temp directory when there is no `node_modules`. No untracked files are added to your project.
@@ -52,12 +59,12 @@ npx vue-component-graph --since main
 Starting from the diff between the merge-base with `main` and the current working tree (including uncommitted and untracked files), it walks imports and template usage backwards. It lists the affected components and the pages to check.
 
 ```
-変更の影響（main との差分）
-  変更ファイル (1)
+Change impact (diff from main)
+  Changed files (1)
     src/composables/usePrice.ts
-  影響するコンポーネント (7)
+  Affected components (7)
     CartItem, PriceTag, ProductCard, CartView, HomeView, ProductView, OrdersView
-  確認するページ (4)
+  Pages to check (4)
     /                HomeView
     /products/:id    ProductView
     /cart            CartView
@@ -108,19 +115,19 @@ Example output (`who_uses` on `examples/shop`):
 
 ```
 PriceTag (src/components/product/PriceTag.vue)
-直接の親 (4):
+Direct parents (4):
   - CartItem (src/components/cart/CartItem.vue)
   - ProductCard (src/components/product/ProductCard.vue)
   - ProductView (src/views/ProductView.vue)
   - OrdersView (src/views/account/OrdersView.vue)
-祖先 (6): CartView, CartItem, HomeView, ProductCard, ProductView, OrdersView
-読み込むモジュール (1): src/router.ts
-経路:
+Ancestors (6): CartView, CartItem, HomeView, ProductCard, ProductView, OrdersView
+Loaded by modules (1): src/router.ts
+Paths:
   src/router.ts → CartView → CartItem → PriceTag
   src/router.ts → HomeView → ProductCard → PriceTag
   src/router.ts → ProductView → PriceTag
   src/router.ts → OrdersView → PriceTag
-表示されるページ (4):
+Pages (4):
   /                HomeView
   /products/:id    ProductView
   /cart            CartView
@@ -143,11 +150,13 @@ PriceTag (src/components/product/PriceTag.vue)
 | Barrels | `export { default as Foo } from './Foo.vue'` |
 | Recursion | A component that renders itself by its file name |
 
-Dependencies that are imported but not rendered in the template (route definitions, `h()`, via variables, and so on) are shown separately as "import only". Modules such as `main.ts` and `router.ts` that import `.vue` files also appear as nodes.
+Dependencies that are imported but not rendered in the template (route definitions, `h()`, via variables, and so on) are shown separately as "import only". Named imports from a `.vue` file (such as exported types) are not component dependencies, though `--since` still follows them. Modules such as `main.ts` and `router.ts` that import `.vue` files also appear as nodes.
+
+Components are named the way Vue resolves them: `SvgIcon/index.vue` is `SvgIcon`, and Nuxt's `components/user/Card.vue` is `UserCard`. When two components share a name, the output adds directories to tell them apart (`a/Item`, `b/Item`). With file-based routing, pages are shown by path (`pages/users/[id]`).
 
 ### Pages (routes)
 
-- **vue-router**: nested `children`, named views (`components: { default, side }`), dynamic routes built with `.map()` and the like
+- **vue-router**: nested `children`, named views (`components: { default, side }`), dynamic routes built with `.map()` and the like. A parent route with `redirect` is not counted as a page
 - **Nuxt**: file-based routing in `pages/` (`[id]`, `[[id]]`, `[...slug]`, `(group)`)
 - **Shared by all pages**: everything under `createApp(App)`, and Nuxt's `app.vue` / `layouts/default.vue`
 
@@ -182,8 +191,8 @@ vue-component-graph [dir] [options]
 | Option | Description |
 |---|---|
 | `-o, --out <file>` | Where to write the HTML |
-| `--focus <name>` | Show only the given component and its descendants |
-| `--who-uses <name>` | Show only the components that use the given component |
+| `--focus <name>` | Show only the given component and its descendants (also prints its details) |
+| `--who-uses <name>` | Show only the components that use the given component (also prints them) |
 | `--since <ref>` | Show components and pages affected by changes since the git `ref` |
 | `--externals` | Also show external components (from libraries) as nodes |
 | `--json` | Print JSON to stdout instead of writing HTML |
@@ -192,7 +201,9 @@ vue-component-graph [dir] [options]
 
 `vue-component-graph mcp [--root <dir>] [--lang <ja|en>]` starts the MCP server (stdio).
 
-`<name>` is a component name (`AppHeader`, `app-header`) or the end of a path (`nav/NavLink`). If several components match, the candidates are printed and the command exits.
+`<name>` is a component name (`AppHeader`, `app-header`) or the end of a path (`nav/NavLink`). If several components match, the candidates are printed and the command exits; if none match, similar names are suggested.
+
+Results go to stdout and errors to stderr, so `npx vue-component-graph --since main > impact.txt` works.
 
 ## JSON output
 
@@ -203,7 +214,8 @@ vue-component-graph [dir] [options]
   root: string
   nodes: {
     id: string            // path relative to root
-    name: string
+    name: string          // component name (Foo/index.vue → Foo); path for modules
+    label: string         // display name; adds directories when names collide
     kind: 'component' | 'module' | 'external'
     group: string         // directory directly under src/
     entry: boolean        // rendered directly by the framework (App.vue, Nuxt pages/, …)
@@ -226,6 +238,7 @@ vue-component-graph [dir] [options]
   recursive: string[]
   entries: string[]       // modules that call createApp()
   warnings: string[]
+  unsupportedPagesDir?: string  // file-based routing directory that can't be read yet
   impact?: { since: string; changed: string[]; affected: string[]; routes: number[]; everywhere: boolean }
 }
 ```
@@ -236,7 +249,9 @@ This is static analysis, so anything decided only at runtime is unknown.
 
 - **Dynamic routes**: a route whose `path` is an expression (e.g. `` `/x/${id}` ``) counts as one route. How many real URLs it produces is unknown
 - **Render functions**: components rendered with `h()` or JSX / TSX are not detected as template dependencies (if imported, they show up as "import only")
-- **File-based routing in Vite**: no routes are built from `src/pages/` for vue-router's Vite plugin (formerly unplugin-vue-router) or vite-plugin-pages. The page components themselves are still analyzed and are not reported as unused
+- **File-based routing in Vite**: no routes are built from `src/pages/` for vue-router's Vite plugin (formerly unplugin-vue-router) or vite-plugin-pages. The output says so, and the page components themselves are still analyzed and are not reported as unused
+- **Monorepos**: run it in each package. Imports from other packages are not seen, so a component used only by another package is reported as unused
+- **Vue 2**: analyzed with Vue 3's SFC compiler. Results are usable, but syntax Vue 3 dropped (such as `<template functional>`) shows up as analysis warnings
 - **`components.d.ts` not committed**: auto-imports from unplugin-vue-components are read from the `components.d.ts` the dev server generates; if it isn't in the repository they can't be resolved. Nuxt is inferred from `components/` even without `.nuxt/`, but directories added in `nuxt.config` and layers are resolved only after `nuxi prepare`
 - **Plugin registration**: components registered globally by plugins (`RouterView`, …) are treated as external components
 - **Template languages**: templates in pug and the like are not analyzed
@@ -252,7 +267,7 @@ npm run demo       # analyze examples/shop and open it
 npm link           # use it as the vue-component-graph command
 ```
 
-`examples/shop` is a fictional shop app used for the README screenshots.
+`examples/shop` (in the repository, not in the npm package) is a fictional shop app used for the README screenshots.
 
 ## License
 
