@@ -394,8 +394,13 @@ export function analyze(rootDir: string, options: BuildOptions = {}): { graph: G
   // ルート定義と createApp() のルート
   const routes: RouteInfo[] = []
   const wrappers: { index: number; view: string; leaf: boolean }[] = []
-  /** 画面ごとの、子ルートを持つ親としての使用回数 */
+  /** 画面ごとの使用回数：default のビューで子を包む親として / 子を持つ親として / 子のない単独のルートとして */
   const parentUses = new Map<string, number>()
+  const parentAnyUses = new Map<string, number>()
+  const leafUses = new Map<string, number>()
+  const count = (m: Map<string, number>, key: string) => m.set(key, (m.get(key) ?? 0) + 1)
+  /** default のビューがないルート → そのルートのコンポーネント */
+  const namedOnly = new Map<number, string[]>()
   const shellRoots = new Set<string>()
   const entries = new Set<string>()
   for (const info of infos.values()) {
@@ -423,12 +428,16 @@ export function analyze(rootDir: string, options: BuildOptions = {}): { graph: G
       const children = r.children.filter((c) => !isUrl(c.path))
       // 子が default のビューを埋める親（管理画面の Layout など）。子が名前付きビューだけなら、親自体が画面
       const wraps = children.some((c) => c.refs.some((ref) => ref.view === 'default'))
-      if (view && wraps) parentUses.set(view, (parentUses.get(view) ?? 0) + 1)
+      if (view && wraps) count(parentUses, view)
+      if (view && children.length) count(parentAnyUses, view)
+      if (view && !children.length && !r.children.length) count(leafUses, view)
       // ページにしない親：redirect がある、空パスの子がそのページを描く、子が外部リンクだけ
       const notPage = r.redirect || children.some((c) => c.path === '') || (r.children.length > 0 && !children.length)
       if (view && !notPage) {
         // レイアウトだけを描画している可能性があるもの（判定は全ルートを見てから）
-        if (wraps || !children.length) wrappers.push({ index: routes.length, view, leaf: !children.length })
+        wrappers.push({ index: routes.length, view, leaf: !children.length })
+        // default のビューがないルート（header / content / sidebar だけ）の画面は、全ルートを見てから選ぶ
+        if (!own.some((o) => o.view === 'default') && own.length > 1) namedOnly.set(routes.length, own.map((o) => o.id))
         routes.push({
           path,
           dynamic,
@@ -442,12 +451,19 @@ export function analyze(rootDir: string, options: BuildOptions = {}): { graph: G
     }
     for (const r of info.routes) add(r, [], '', false)
   }
-  // 複数の親ルートで子を包んでいる画面はレイアウト（管理画面の Layout など）。その親ルート自体はページに数えない。
-  // 子のないルートでそのレイアウトを指定したもの（メニュー項目など）も同じ。
-  // 1 か所でしか包まない親（一覧の /users に詳細の :id がぶら下がる形など）はページとして残す
+  // レイアウトの画面：default のビューで複数のルートを包むもの（管理画面の Layout）か、
+  // 複数のルートの親になり、単独のページとしては一度も使われないもの（名前付きビューだけを並べる設定画面のレイアウトなど）。
+  // その親ルート自体と、子のないルートでレイアウトを指定したもの（メニュー項目など）はページに数えない。
+  // 1 か所でしか包まない親（一覧の /users に詳細の :id がぶら下がる形）や、単独のページにもなる画面（directus の Collection）は残す
+  const uses = (m: Map<string, number>, v: string) => m.get(v) ?? 0
+  const isLayout = (v: string) => uses(parentUses, v) > 1 || (uses(parentAnyUses, v) > 1 && !uses(leafUses, v))
   const layoutOnly = new Set(
-    wrappers.filter((w) => (parentUses.get(w.view) ?? 0) > (w.leaf ? 0 : 1)).map((w) => w.index),
+    wrappers.filter((w) => (w.leaf ? uses(parentUses, w.view) > 0 || isLayout(w.view) : isLayout(w.view))).map((w) => w.index),
   )
+  // 名前付きビューだけのルートは、兄弟と共有していない画面（content など）をメインの画面にする
+  const viewCount = new Map<string, number>()
+  for (const ids of namedOnly.values()) for (const id of ids) count(viewCount, id)
+  for (const [i, ids] of namedOnly) routes[i].view = [...ids].sort((a, b) => uses(viewCount, a) - uses(viewCount, b))[0]
   if (layoutOnly.size) {
     const kept = routes.filter((_, i) => !layoutOnly.has(i))
     routes.length = 0

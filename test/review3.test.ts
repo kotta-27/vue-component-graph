@@ -36,6 +36,24 @@ export const routes = [
     expect(g.routes.map((r) => r.path)).toEqual(['/', '/+', '/folders/:folder', '/folders/:folder/+', '/all'])
   })
 
+  it('treats a parent that only lays out named views in several trees as a layout, and picks the unshared view', () => {
+    const g = buildGraph(project({
+      'src/SettingsLayout.vue': view('<RouterView name="header" /><RouterView name="content" /><RouterView name="sidebar" />'),
+      'src/Header.vue': view(),
+      'src/Sidebar.vue': view(),
+      'src/Group.vue': view(),
+      'src/Users.vue': view(),
+      'src/router.ts': `const Layout = () => import('./SettingsLayout.vue')
+const header = () => import('./Header.vue')
+const sidebar = () => import('./Sidebar.vue')
+export const routes = [
+  { path: '/:org/settings', component: Layout, children: [{ path: 'group', components: { header, content: () => import('./Group.vue'), sidebar } }] },
+  { path: '/:org/settings', component: Layout, children: [{ path: 'users', components: { header, content: () => import('./Users.vue'), sidebar } }] },
+]`,
+    }))
+    expect(g.routes.map((r) => `${r.path} ${r.view}`)).toEqual(['/:org/settings/group src/Group.vue', '/:org/settings/users src/Users.vue'])
+  })
+
   it("lets an empty-path child stand for its parent's URL", () => {
     const g = buildGraph(project({
       'src/layouts/Main.vue': view('<RouterView />'),
