@@ -267,6 +267,15 @@ export function analyze(rootDir: string, options: BuildOptions = {}): { graph: G
       shell: false,
     })
   }
+  // index.ts のように名前だけでは区別できないモジュールは、区別できるまで親ディレクトリを付ける
+  const modules = [...nodes.values()].filter((n) => n.kind === 'module')
+  for (const n of modules) {
+    const parts = n.id.split('/')
+    const tail = (id: string, k: number) => id.split('/').slice(-k).join('/')
+    let k = /^index\./.test(parts[parts.length - 1]) ? 2 : 1
+    while (k < parts.length && modules.some((m) => m !== n && tail(m.id, k) === tail(n.id, k))) k++
+    n.name = tail(n.id, k)
+  }
 
   // スキャン対象外（親ディレクトリなど）の .vue
   for (const e of edges.values()) {
