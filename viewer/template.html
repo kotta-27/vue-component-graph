@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>vue-component-graph — __TITLE__</title>
+<style>/*__CSS__*/</style>
+</head>
+<body>
+<div class="viz-root" id="app">
+  <header class="bar">
+    <div class="brand">
+      <strong>vue-component-graph</strong>
+      <span class="root" id="root-path"></span>
+    </div>
+    <div class="search">
+      <input id="search" type="search" placeholder="コンポーネントを検索（/）" autocomplete="off" spellcheck="false">
+      <ul id="search-results" class="results" role="listbox" hidden></ul>
+    </div>
+    <div class="tools">
+      <label title="template で描画せず import だけしている依存（ルート定義、h()、変数経由など）"><input type="checkbox" id="opt-script" checked> script 依存</label>
+      <label id="opt-impact-wrap" title="--since で指定した差分の影響範囲を強調する" hidden><input type="checkbox" id="opt-impact" checked> 変更の影響</label>
+      <label title="main.ts や router.ts など .vue を import している JS/TS"><input type="checkbox" id="opt-modules" checked> JS/TS モジュール</label>
+      <button id="btn-fit" type="button" title="全体を表示（F）">全体表示</button>
+    </div>
+  </header>
+  <div class="focus-bar" id="focus-bar" hidden></div>
+  <main>
+    <svg id="canvas" aria-label="コンポーネント依存グラフ">
+      <defs>
+        <marker id="arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0,0.5 L7.5,4 L0,7.5 z" class="arrow"></path>
+        </marker>
+        <marker id="arrow-hi" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0,0.5 L7.5,4 L0,7.5 z" class="arrow-hi"></path>
+        </marker>
+        <marker id="arrow-cycle" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0,0.5 L7.5,4 L0,7.5 z" class="arrow-cycle"></path>
+        </marker>
+      </defs>
+      <g id="viewport">
+        <g id="edges"></g>
+        <g id="nodes"></g>
+      </g>
+    </svg>
+    <div class="tooltip" id="tooltip" role="tooltip" hidden></div>
+    <div class="legend" id="legend"></div>
+    <aside class="side" id="side"></aside>
+  </main>
+</div>
+<script type="application/json" id="graph-data">__DATA__</script>
+<script>/*__JS__*/</script>
+</body>
+</html>

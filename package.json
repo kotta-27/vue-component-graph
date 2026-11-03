@@ -1,0 +1,51 @@
+{
+  "name": "vue-component-graph",
+  "version": "0.1.0",
+  "description": "Vue コンポーネントの依存関係と、それぞれが表示されるページを可視化する CLI。変更の影響範囲も調べられる",
+  "author": "Kota Mizuno",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kotta-27/vue-component-graph.git"
+  },
+  "homepage": "https://github.com/kotta-27/vue-component-graph#readme",
+  "bugs": {
+    "url": "https://github.com/kotta-27/vue-component-graph/issues"
+  },
+  "type": "module",
+  "bin": {
+    "vue-component-graph": "./dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "viewer"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "prepare": "tsup",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "demo": "node dist/cli.js examples/shop"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "keywords": [
+    "vue",
+    "cli",
+    "dependency-graph",
+    "visualization"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "@vue/compiler-sfc": "^3.5.44",
+    "cac": "^7.1.0"
+  },
+  "devDependencies": {
+    "@babel/types": "^7.29.11",
+    "@types/node": "^26.6.6",
+    "tsup": "^9.0.0",
+    "typescript": "^7.0.2",
+    "vitest": "^5.1.0"
+  }
+}

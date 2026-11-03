@@ -1,0 +1,6 @@
+{
+  "compilerOptions": {
+    /* alias */
+    "paths": { "@/*": ["./src/*"] },
+  },
+}
