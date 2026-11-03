@@ -5,6 +5,178 @@
   const SVG_NS = 'http://www.w3.org/2000/svg'
   const $ = (id) => document.getElementById(id)
 
+  // ---------- 表示言語 ----------
+  const MESSAGES = {
+    ja: {
+      langName: '日本語',
+      langTitle: '表示言語',
+      searchPlaceholder: 'コンポーネントを検索（/）',
+      optScript: 'script 依存',
+      optScriptTitle: 'template で描画せず import だけしている依存（ルート定義、h()、変数経由など）',
+      optImpact: '変更の影響',
+      optImpactTitle: '--since で指定した差分の影響範囲を強調する',
+      optModules: 'JS/TS モジュール',
+      optModulesTitle: 'main.ts や router.ts など .vue を import している JS/TS',
+      fit: '全体表示',
+      fitTitle: '全体を表示（F）',
+      canvas: 'コンポーネント依存グラフ',
+      metaParents: (n) => `親 ${n}`,
+      metaChildren: (n) => `子 ${n}`,
+      metaLines: (n) => `${n} 行`,
+      other: 'その他',
+      edgeTemplate: 'template で描画',
+      edgeScript: 'import のみ',
+      edgeAsync: '遅延読み込み',
+      cycle: '循環',
+      unused: '未使用',
+      recursive: '再帰',
+      changedFiles: '変更したファイル',
+      affected: '影響を受ける',
+      focusBar: (name, dir, n) => `<strong>${name}</strong> の${dir === 'down' ? '配下（使っているもの）' : '使っている側'}を表示中（${n} 件）`,
+      showAll: '全体に戻す',
+      tabOverview: '概要',
+      tabList: '一覧',
+      tabPages: (n) => `ページ（${n}）`,
+      ofTotal: (n) => ` / 全体 ${n}`,
+      scopeFocus: (name, dir) => `表示中の範囲：<strong>${name}</strong> ${dir === 'down' ? 'の配下' : 'を使っている側'}`,
+      kpiComponents: 'コンポーネント',
+      kpiEdges: '依存',
+      kpiUnused: '未使用',
+      kpiCycles: '循環',
+      unusedComponents: '未使用のコンポーネント',
+      cycles: '循環参照',
+      recursiveComponents: '再帰コンポーネント',
+      externalsByFiles: '外部コンポーネント（使用ファイル数）',
+      warnings: (n) => `解析の警告（${n}）`,
+      none: 'なし',
+      listScope: (v, total) => `表示中の ${v} 件（全体 ${total} 件）`,
+      colName: '名前',
+      colParents: '親',
+      colChildren: '子',
+      colLines: '行',
+      backToOverview: '← 概要',
+      group: (g) => `グループ: ${g}`,
+      kindModule: 'JS/TS モジュール',
+      kindExternal: '外部コンポーネント',
+      focusDown: '配下だけ表示',
+      focusUp: '使っている側を表示',
+      openVscode: 'VS Code で開く',
+      usedBy: (n) => `使っている側（${n}）`,
+      uses: (n) => `使っているもの（${n}）`,
+      externals: (n) => `外部コンポーネント（${n}）`,
+      dynamic: '動的',
+      pages: '表示されるページ',
+      pagesN: (n) => `表示されるページ（${n}）`,
+      shellNote: (name) => `全ページ（${name} の配下で常に表示）`,
+      unreachable: 'ルートから辿れない',
+      noRoutes: 'ルート定義が見つからない',
+      noRoutesFound: 'ルート定義が見つかりませんでした',
+      sharedByAll: (names) => `全ページ共通：${names.join('、')}`,
+      colPath: 'パス',
+      colScreen: '画面',
+      colParts: '部品',
+      colPartsTitle: 'このページで描画されるコンポーネント数（全ページ共通分を除く）',
+      impactTitle: (since) => `変更の影響（${since} との差分）`,
+      impactNone: '解析対象に関係する変更はありません',
+      impactChanged: (n) => `変更ファイル（${n}）`,
+      changedTag: '変更',
+      impactAffected: (n) => `影響を受けるコンポーネント（${n}）`,
+      impactPages: (n) => `確認するページ（${n}）`,
+      allPages: '全ページ',
+    },
+    en: {
+      langName: 'English',
+      langTitle: 'Language',
+      searchPlaceholder: 'Search components (/)',
+      optScript: 'Script deps',
+      optScriptTitle: 'Dependencies imported but not rendered in the template (route definitions, h(), via variables, …)',
+      optImpact: 'Change impact',
+      optImpactTitle: 'Highlight what the --since diff affects',
+      optModules: 'JS/TS modules',
+      optModulesTitle: 'JS/TS files that import .vue files, such as main.ts and router.ts',
+      fit: 'Fit',
+      fitTitle: 'Fit the whole graph (F)',
+      canvas: 'Component dependency graph',
+      metaParents: (n) => `${n} ${n === 1 ? 'parent' : 'parents'}`,
+      metaChildren: (n) => `${n} ${n === 1 ? 'child' : 'children'}`,
+      metaLines: (n) => `${n} ${n === 1 ? 'line' : 'lines'}`,
+      other: 'Other',
+      edgeTemplate: 'Rendered in template',
+      edgeScript: 'Import only',
+      edgeAsync: 'Lazy loaded',
+      cycle: 'Cycle',
+      unused: 'Unused',
+      recursive: 'Recursive',
+      changedFiles: 'Changed files',
+      affected: 'Affected',
+      focusBar: (name, dir, n) =>
+        dir === 'down' ? `Showing what <strong>${name}</strong> uses (${n})` : `Showing what uses <strong>${name}</strong> (${n})`,
+      showAll: 'Show all',
+      tabOverview: 'Overview',
+      tabList: 'List',
+      tabPages: (n) => `Pages (${n})`,
+      ofTotal: (n) => ` / ${n} total`,
+      scopeFocus: (name, dir) =>
+        dir === 'down' ? `Scope: <strong>${name}</strong> and what it uses` : `Scope: what uses <strong>${name}</strong>`,
+      kpiComponents: 'Components',
+      kpiEdges: 'Dependencies',
+      kpiUnused: 'Unused',
+      kpiCycles: 'Cycles',
+      unusedComponents: 'Unused components',
+      cycles: 'Circular references',
+      recursiveComponents: 'Recursive components',
+      externalsByFiles: 'External components (files using them)',
+      warnings: (n) => `Analysis warnings (${n})`,
+      none: 'None',
+      listScope: (v, total) => `Showing ${v} of ${total}`,
+      colName: 'Name',
+      colParents: 'Parents',
+      colChildren: 'Children',
+      colLines: 'Lines',
+      backToOverview: '← Overview',
+      group: (g) => `Group: ${g}`,
+      kindModule: 'JS/TS module',
+      kindExternal: 'External component',
+      focusDown: 'Show descendants only',
+      focusUp: 'Show users',
+      openVscode: 'Open in VS Code',
+      usedBy: (n) => `Used by (${n})`,
+      uses: (n) => `Uses (${n})`,
+      externals: (n) => `External components (${n})`,
+      dynamic: 'dynamic',
+      pages: 'Pages',
+      pagesN: (n) => `Pages (${n})`,
+      shellNote: (name) => `Every page (always rendered under ${name})`,
+      unreachable: 'Not reachable from any route',
+      noRoutes: 'No route definitions found',
+      noRoutesFound: 'No route definitions found',
+      sharedByAll: (names) => `On every page: ${names.join(', ')}`,
+      colPath: 'Path',
+      colScreen: 'Screen',
+      colParts: 'Parts',
+      colPartsTitle: 'Components rendered on this page (excluding those shared by every page)',
+      impactTitle: (since) => `Change impact (diff from ${since})`,
+      impactNone: 'No changes relevant to the analysis',
+      impactChanged: (n) => `Changed files (${n})`,
+      changedTag: 'changed',
+      impactAffected: (n) => `Affected components (${n})`,
+      impactPages: (n) => `Pages to check (${n})`,
+      allPages: 'all pages',
+    },
+  }
+  const LANG_KEY = 'vue-component-graph:lang'
+  let lang = (() => {
+    try {
+      const saved = localStorage.getItem(LANG_KEY)
+      if (saved in MESSAGES) return saved
+    } catch {}
+    return /^ja\b/.test(navigator.language) ? 'ja' : 'en'
+  })()
+  const t = (key, ...args) => {
+    const m = MESSAGES[lang][key]
+    return typeof m === 'function' ? m(...args) : m
+  }
+
   const NODE_H = 28
   const PAD_X = 12
   const BAR_W = 4
@@ -483,8 +655,8 @@
   const tooltip = $('tooltip')
   function showTooltip(id, e) {
     const n = nodeById.get(id)
-    const meta = [`親 ${parentsOf.get(id).length}`, `子 ${childrenOf.get(id).length}`]
-    if (n.lines) meta.push(`${n.lines} 行`)
+    const meta = [t('metaParents', parentsOf.get(id).length), t('metaChildren', childrenOf.get(id).length)]
+    if (n.lines) meta.push(t('metaLines', n.lines))
     tooltip.innerHTML =
       `<div class="t-name">${esc(n.name)}</div><div class="t-path">${esc(n.id)}</div>` +
       `<div class="t-meta">${meta.join(' · ')}</div>` +
@@ -509,22 +681,22 @@
       .slice(0, 8)
       .map((g) => `<div class="row"><span class="swatch" style="background:${groupColor.get(g)}"></span>${esc(g)}</div>`)
     if (groupOrder.length > 8 && groupOrder.slice(8).some((g) => groups.has(g))) {
-      rows.push('<div class="row"><span class="swatch" style="background:var(--text-muted)"></span>その他</div>')
+      rows.push(`<div class="row"><span class="swatch" style="background:var(--text-muted)"></span>${t('other')}</div>`)
     }
     const line = (cls, label) =>
       `<div class="row"><svg width="28" height="10"><path d="M1,5 L27,5" class="edge ${cls}"></path></svg>${label}</div>`
     $('legend').innerHTML =
       rows.join('') +
       '<div class="sep"></div>' +
-      line('', 'template で描画') +
-      line('script', 'import のみ') +
-      line('async', '遅延読み込み') +
-      (DATA.cycles.length ? line('cycle', '循環') : '') +
-      (DATA.orphans.length ? '<div class="row"><span class="status-icon warning">!</span>未使用</div>' : '') +
+      line('', t('edgeTemplate')) +
+      line('script', t('edgeScript')) +
+      line('async', t('edgeAsync')) +
+      (DATA.cycles.length ? line('cycle', t('cycle')) : '') +
+      (DATA.orphans.length ? `<div class="row"><span class="status-icon warning">!</span>${t('unused')}</div>` : '') +
       (IMPACT && state.showImpact
         ? '<div class="sep"></div>' +
-          '<div class="row"><span class="swatch impact-changed"></span>変更したファイル</div>' +
-          '<div class="row"><span class="swatch impact-affected"></span>影響を受ける</div>'
+          `<div class="row"><span class="swatch impact-changed"></span>${t('changedFiles')}</div>` +
+          `<div class="row"><span class="swatch impact-affected"></span>${t('affected')}</div>`
         : '')
   }
 
@@ -535,9 +707,8 @@
       return
     }
     const n = nodeById.get(state.focus.id)
-    const what = state.focus.dir === 'down' ? '配下（使っているもの）' : '使っている側'
     bar.hidden = false
-    bar.innerHTML = `<span><strong>${esc(n.name)}</strong> の${what}を表示中（${nodes.length - 1} 件）</span><button type="button" data-unfocus>全体に戻す</button>`
+    bar.innerHTML = `<span>${t('focusBar', esc(n.name), state.focus.dir, nodes.length - 1)}</span><button type="button" data-unfocus>${t('showAll')}</button>`
   }
 
   // ---------- サイドパネル ----------
@@ -549,32 +720,32 @@
 
   function statusHtml(id) {
     const s = []
-    if (orphanSet.has(id)) s.push('<span class="status"><span class="status-icon warning">!</span>未使用</span>')
-    if (cycleOf.has(id)) s.push('<span class="status"><span class="status-icon critical">↻</span>循環</span>')
-    if (recursiveSet.has(id)) s.push('<span class="status"><span class="status-icon warning">↺</span>再帰</span>')
+    if (orphanSet.has(id)) s.push(`<span class="status"><span class="status-icon warning">!</span>${t('unused')}</span>`)
+    if (cycleOf.has(id)) s.push(`<span class="status"><span class="status-icon critical">↻</span>${t('cycle')}</span>`)
+    if (recursiveSet.has(id)) s.push(`<span class="status"><span class="status-icon warning">↺</span>${t('recursive')}</span>`)
     return s.length ? `<div>${s.join('')}</div>` : ''
   }
 
   function nodeItem(id, tags = []) {
     const n = nodeById.get(id)
-    const t = tags.map((x) => `<span class="tag">${x}</span>`).join('')
-    return `<li class="link" data-select="${esc(id)}" title="${esc(id)}"><span class="dot" style="background:${colorOf(n)}"></span>${esc(n.name)}${t}</li>`
+    const tagHtml = tags.map((x) => `<span class="tag">${x}</span>`).join('')
+    return `<li class="link" data-select="${esc(id)}" title="${esc(id)}"><span class="dot" style="background:${colorOf(n)}"></span>${esc(n.name)}${tagHtml}</li>`
   }
 
   function edgeTags(e) {
-    const t = []
-    if (e.type === 'script') t.push('import のみ')
-    if (e.async) t.push('async')
-    return t
+    const tags = []
+    if (e.type === 'script') tags.push(t('edgeScript'))
+    if (e.async) tags.push('async')
+    return tags
   }
 
   function renderSide() {
     if (state.selected && nodeById.has(state.selected)) return renderDetail(state.selected)
     const tabs =
       '<div class="tabs" role="tablist">' +
-      `<button type="button" role="tab" data-tab="overview" aria-selected="${state.tab === 'overview'}">概要</button>` +
-      `<button type="button" role="tab" data-tab="list" aria-selected="${state.tab === 'list'}">一覧</button>` +
-      `<button type="button" role="tab" data-tab="pages" aria-selected="${state.tab === 'pages'}">ページ（${DATA.routes.length}）</button>` +
+      `<button type="button" role="tab" data-tab="overview" aria-selected="${state.tab === 'overview'}">${t('tabOverview')}</button>` +
+      `<button type="button" role="tab" data-tab="list" aria-selected="${state.tab === 'list'}">${t('tabList')}</button>` +
+      `<button type="button" role="tab" data-tab="pages" aria-selected="${state.tab === 'pages'}">${t('tabPages', DATA.routes.length)}</button>` +
       '</div>'
     const body = state.tab === 'list' ? listHtml() : state.tab === 'pages' ? pagesHtml() : overviewHtml()
     side.innerHTML = tabs + body
@@ -604,41 +775,40 @@
   function overviewHtml() {
     const sc = scope()
     const kpi = (v, total, k) => {
-      const of = v !== total ? `<span class="of"> / 全体 ${total}</span>` : ''
+      const of = v !== total ? `<span class="of">${t('ofTotal', total)}</span>` : ''
       return `<div class="kpi"><div class="v">${v}${of}</div><div class="k">${k}</div></div>`
     }
     let h = impactHtml()
     if (state.focus) {
       const n = nodeById.get(state.focus.id)
-      const what = state.focus.dir === 'down' ? 'の配下' : 'を使っている側'
-      h += `<p class="scope">表示中の範囲：<strong>${esc(n.name)}</strong> ${what}</p>`
+      h += `<p class="scope">${t('scopeFocus', esc(n.name), state.focus.dir)}</p>`
     }
     h += '<div class="kpis">'
-    h += kpi(sc.components.length, sc.total.components, 'コンポーネント')
-    h += kpi(sc.edges.length, sc.total.edges, '依存')
-    h += kpi(sc.orphans.length, sc.total.orphans, '未使用')
-    h += kpi(sc.cycles.length, sc.total.cycles, '循環')
+    h += kpi(sc.components.length, sc.total.components, t('kpiComponents'))
+    h += kpi(sc.edges.length, sc.total.edges, t('kpiEdges'))
+    h += kpi(sc.orphans.length, sc.total.orphans, t('kpiUnused'))
+    h += kpi(sc.cycles.length, sc.total.cycles, t('kpiCycles'))
     h += '</div>'
 
-    h += '<h3>未使用のコンポーネント</h3>'
+    h += `<h3>${t('unusedComponents')}</h3>`
     h += sc.orphans.length
       ? `<ul>${sc.orphans.map((id) => nodeItem(id)).join('')}</ul>`
-      : '<p class="empty">なし</p>'
+      : `<p class="empty">${t('none')}</p>`
 
-    h += '<h3>循環参照</h3>'
+    h += `<h3>${t('cycles')}</h3>`
     h += sc.cycles.length
       ? sc.cycles.map((c) => `<ul>${c.map((id) => nodeItem(id)).join('')}</ul>`).join('<div style="height:8px"></div>')
-      : '<p class="empty">なし</p>'
+      : `<p class="empty">${t('none')}</p>`
 
     if (sc.recursive.length) {
-      h += '<h3>再帰コンポーネント</h3>'
+      h += `<h3>${t('recursiveComponents')}</h3>`
       h += `<ul>${sc.recursive.map((id) => nodeItem(id)).join('')}</ul>`
     }
 
     const ext = new Map()
     for (const n of sc.nodes) for (const x of n.externals) ext.set(x, (ext.get(x) || 0) + 1)
     if (ext.size) {
-      h += '<h3>外部コンポーネント（使用ファイル数）</h3><ul>'
+      h += `<h3>${t('externalsByFiles')}</h3><ul>`
       h += [...ext]
         .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
         .slice(0, 20)
@@ -648,7 +818,7 @@
     }
 
     if (DATA.warnings.length) {
-      h += `<h3>解析の警告（${DATA.warnings.length}）</h3><ul class="warnings">`
+      h += `<h3>${t('warnings', DATA.warnings.length)}</h3><ul class="warnings">`
       h += DATA.warnings.map((w) => `<li>${esc(w)}</li>`).join('')
       h += '</ul>'
     }
@@ -668,9 +838,9 @@
       return `<th class="${num ? 'num' : ''}" data-sort="${k}" aria-sort="${key === k ? (desc ? 'descending' : 'ascending') : 'none'}">${label}${arrow}</th>`
     }
     let h = sc.components.length !== sc.total.components
-      ? `<p class="scope">表示中の ${sc.components.length} 件（全体 ${sc.total.components} 件）</p>`
+      ? `<p class="scope">${t('listScope', sc.components.length, sc.total.components)}</p>`
       : ''
-    h += `<table class="list"><thead><tr>${th('name', '名前')}${th('parents', '親', 1)}${th('children', '子', 1)}${th('lines', '行', 1)}</tr></thead><tbody>`
+    h += `<table class="list"><thead><tr>${th('name', t('colName'))}${th('parents', t('colParents'), 1)}${th('children', t('colChildren'), 1)}${th('lines', t('colLines'), 1)}</tr></thead><tbody>`
     for (const r of rows) {
       h +=
         `<tr class="row" data-select="${esc(r.n.id)}" title="${esc(r.n.id)}">` +
@@ -685,28 +855,28 @@
     const abs = DATA.root.replace(/\/$/, '') + '/' + n.id
     const parents = parentsOf.get(id)
     const children = childrenOf.get(id)
-    let h = '<button type="button" data-back>← 概要</button>'
+    let h = `<button type="button" data-back>${t('backToOverview')}</button>`
     h += `<h2 style="margin-top:12px">${esc(n.name)}</h2><div class="path">${esc(n.id)}</div>`
     h += statusHtml(id)
     const meta = []
-    if (n.kind === 'component') meta.push(`グループ: ${esc(n.group)}`)
-    else meta.push(n.kind === 'module' ? 'JS/TS モジュール' : '外部コンポーネント')
-    if (n.lines) meta.push(`${n.lines} 行`)
+    if (n.kind === 'component') meta.push(t('group', esc(n.group)))
+    else meta.push(n.kind === 'module' ? t('kindModule') : t('kindExternal'))
+    if (n.lines) meta.push(t('metaLines', n.lines))
     h += `<div class="path" style="margin-top:6px;color:var(--text-secondary)">${meta.join(' · ')}</div>`
 
     h += '<div class="actions">'
-    if (children.length) h += `<button type="button" data-focus="${esc(id)}" data-dir="down">配下だけ表示</button>`
-    if (parents.length) h += `<button type="button" data-focus="${esc(id)}" data-dir="up">使っている側を表示</button>`
-    if (n.kind !== 'external') h += `<a class="button" href="vscode://file${encodeURI(abs)}">VS Code で開く</a>`
+    if (children.length) h += `<button type="button" data-focus="${esc(id)}" data-dir="down">${t('focusDown')}</button>`
+    if (parents.length) h += `<button type="button" data-focus="${esc(id)}" data-dir="up">${t('focusUp')}</button>`
+    if (n.kind !== 'external') h += `<a class="button" href="vscode://file${encodeURI(abs)}">${t('openVscode')}</a>`
     h += '</div>'
 
     if (n.kind === 'component') h += pagesOfHtml(n)
-    h += `<h3>使っている側（${parents.length}）</h3>`
-    h += parents.length ? `<ul>${parents.map((e) => nodeItem(e.from, edgeTags(e))).join('')}</ul>` : '<p class="empty">なし</p>'
-    h += `<h3>使っているもの（${children.length}）</h3>`
-    h += children.length ? `<ul>${children.map((e) => nodeItem(e.to, edgeTags(e))).join('')}</ul>` : '<p class="empty">なし</p>'
+    h += `<h3>${t('usedBy', parents.length)}</h3>`
+    h += parents.length ? `<ul>${parents.map((e) => nodeItem(e.from, edgeTags(e))).join('')}</ul>` : `<p class="empty">${t('none')}</p>`
+    h += `<h3>${t('uses', children.length)}</h3>`
+    h += children.length ? `<ul>${children.map((e) => nodeItem(e.to, edgeTags(e))).join('')}</ul>` : `<p class="empty">${t('none')}</p>`
     if (n.externals.length) {
-      h += `<h3>外部コンポーネント（${n.externals.length}）</h3><ul>`
+      h += `<h3>${t('externals', n.externals.length)}</h3><ul>`
       h += n.externals.map((x) => `<li>${esc(x)}</li>`).join('')
       h += '</ul>'
     }
@@ -715,7 +885,7 @@
   }
 
   function routeLabel(r) {
-    return r.dynamic ? `<span class="tag" style="margin:0">動的</span> <code>${esc(r.path)}</code>` : esc(r.path)
+    return r.dynamic ? `<span class="tag" style="margin:0">${t('dynamic')}</span> <code>${esc(r.path)}</code>` : esc(r.path)
   }
 
   function routeItem(i) {
@@ -730,22 +900,22 @@
 
   function pagesOfHtml(n) {
     if (n.shell) {
-      return `<h3>表示されるページ</h3><p class="note">全ページ（${esc(shellNames()[0] || 'App')} の配下で常に表示）</p>`
+      return `<h3>${t('pages')}</h3><p class="note">${t('shellNote', esc(shellNames()[0] || 'App'))}</p>`
     }
     if (!n.routes.length) {
-      return `<h3>表示されるページ</h3><p class="empty">${DATA.routes.length ? 'ルートから辿れない' : 'ルート定義が見つからない'}</p>`
+      return `<h3>${t('pages')}</h3><p class="empty">${DATA.routes.length ? t('unreachable') : t('noRoutes')}</p>`
     }
-    return `<h3>表示されるページ（${n.routes.length}）</h3><ul>${n.routes.map(routeItem).join('')}</ul>`
+    return `<h3>${t('pagesN', n.routes.length)}</h3><ul>${n.routes.map(routeItem).join('')}</ul>`
   }
 
   function pagesHtml() {
-    if (!DATA.routes.length) return '<p class="empty">ルート定義が見つかりませんでした</p>'
+    if (!DATA.routes.length) return `<p class="empty">${t('noRoutesFound')}</p>`
     const counts = DATA.routes.map(() => 0)
     for (const n of DATA.nodes) if (n.kind === 'component') for (const i of n.routes) counts[i]++
     let h = ''
     const shell = shellNames()
-    if (shell.length) h += `<p class="note">全ページ共通：${shell.map(esc).join('、')}</p>`
-    h += '<table class="list"><thead><tr><th>パス</th><th>画面</th><th class="num" title="このページで描画されるコンポーネント数（全ページ共通分を除く）">部品</th></tr></thead><tbody>'
+    if (shell.length) h += `<p class="note">${t('sharedByAll', shell.map(esc))}</p>`
+    h += `<table class="list"><thead><tr><th>${t('colPath')}</th><th>${t('colScreen')}</th><th class="num" title="${t('colPartsTitle')}">${t('colParts')}</th></tr></thead><tbody>`
     DATA.routes.forEach((r, i) => {
       const page = nodeById.get(r.view)
       const hit = IMPACT && state.showImpact && IMPACT.routes.includes(i)
@@ -758,18 +928,18 @@
 
   function impactHtml() {
     if (!IMPACT) return ''
-    let h = `<section class="impact"><h3 style="margin-top:4px">変更の影響（${esc(IMPACT.since)} との差分）</h3>`
-    if (!IMPACT.changed.length) return h + '<p class="empty">解析対象に関係する変更はありません</p></section>'
-    h += `<div class="sub">変更ファイル（${IMPACT.changed.length}）</div><ul>`
+    let h = `<section class="impact"><h3 style="margin-top:4px">${t('impactTitle', esc(IMPACT.since))}</h3>`
+    if (!IMPACT.changed.length) return h + `<p class="empty">${t('impactNone')}</p></section>`
+    h += `<div class="sub">${t('impactChanged', IMPACT.changed.length)}</div><ul>`
     h += IMPACT.changed
-      .map((id) => (nodeById.has(id) ? nodeItem(id, ['変更']) : `<li class="file">${esc(id)}</li>`))
+      .map((id) => (nodeById.has(id) ? nodeItem(id, [t('changedTag')]) : `<li class="file">${esc(id)}</li>`))
       .join('')
     h += '</ul>'
     const others = IMPACT.affected.filter((id) => !changedSet.has(id))
-    h += `<div class="sub">影響を受けるコンポーネント（${others.length}）</div>`
-    h += others.length ? `<ul>${others.map((id) => nodeItem(id)).join('')}</ul>` : '<p class="empty">なし</p>'
-    h += `<div class="sub">確認するページ（${IMPACT.routes.length}）${IMPACT.everywhere ? ' <span class="tag" style="margin:0">全ページ</span>' : ''}</div>`
-    h += IMPACT.routes.length ? `<ul>${IMPACT.routes.map(routeItem).join('')}</ul>` : '<p class="empty">なし</p>'
+    h += `<div class="sub">${t('impactAffected', others.length)}</div>`
+    h += others.length ? `<ul>${others.map((id) => nodeItem(id)).join('')}</ul>` : `<p class="empty">${t('none')}</p>`
+    h += `<div class="sub">${t('impactPages', IMPACT.routes.length)}${IMPACT.everywhere ? ` <span class="tag" style="margin:0">${t('allPages')}</span>` : ''}</div>`
+    h += IMPACT.routes.length ? `<ul>${IMPACT.routes.map(routeItem).join('')}</ul>` : `<p class="empty">${t('none')}</p>`
     return h + '</section>'
   }
 
@@ -893,6 +1063,28 @@
   })
   $('btn-fit').addEventListener('click', fitView)
 
+  /** template.html の固定文言（data-i18n*）を今の言語で埋める */
+  function applyStaticText() {
+    document.documentElement.lang = lang
+    for (const e of document.querySelectorAll('[data-i18n]')) e.textContent = t(e.dataset.i18n)
+    for (const e of document.querySelectorAll('[data-i18n-title]')) e.title = t(e.dataset.i18nTitle)
+    for (const e of document.querySelectorAll('[data-i18n-placeholder]')) e.placeholder = t(e.dataset.i18nPlaceholder)
+    for (const e of document.querySelectorAll('[data-i18n-label]')) e.setAttribute('aria-label', t(e.dataset.i18nLabel))
+    // ボタンには切り替え先の言語名を出す
+    $('btn-lang').textContent = MESSAGES[lang === 'ja' ? 'en' : 'ja'].langName
+  }
+  $('btn-lang').addEventListener('click', () => {
+    lang = lang === 'ja' ? 'en' : 'ja'
+    try {
+      localStorage.setItem(LANG_KEY, lang)
+    } catch {}
+    applyStaticText()
+    hideTooltip()
+    renderLegend(current.nodes)
+    renderFocusBar(current.nodes)
+    renderSide()
+  })
+
   document.addEventListener('keydown', (e) => {
     if (e.target instanceof HTMLInputElement) return
     if (e.metaKey || e.ctrlKey || e.altKey) return
@@ -917,5 +1109,6 @@
   $('root-path').textContent = '\u200e' + DATA.root + '\u200e'
   $('root-path').title = DATA.root
   if (DATA.initialFocus) state.focus = DATA.initialFocus
+  applyStaticText()
   render(true)
 })()

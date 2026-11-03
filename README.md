@@ -16,7 +16,7 @@ Questions it answers:
 - Are there unused components or circular references?
 
 > [!NOTE]
-> The terminal output, MCP responses and viewer UI are currently in Japanese.
+> The viewer UI switches between English and Japanese (it follows your browser's language by default). Terminal output and MCP responses are currently in Japanese.
 
 ## Quick start
 
@@ -164,15 +164,15 @@ Dependencies that are imported but not rendered in the template (route definitio
 |---|---|
 | Hover / click | Highlights the component's ancestors and descendants |
 | Details panel | Components that use it, components it uses, pages it appears on, external components |
-| 「配下だけ表示」 (descendants only) / 「使っている側を表示」 (users) | Narrows the graph to that scope. Summary counts are recalculated for the narrowed scope |
-| 「VS Code で開く」 (open in VS Code) | Opens the file in your editor |
+| "Show descendants only" / "Show users" | Narrows the graph to that scope. Summary counts are recalculated for the narrowed scope |
+| "Open in VS Code" | Opens the file in your editor |
 | Tabs | Overview (unused, cycles, …) / List (sortable by parents, children, lines) / Pages (screen and component count per route) |
 | `/` | Search |
 | `F` | Fit the whole graph |
 | Drag / pinch or Ctrl+wheel | Pan / zoom |
 | `Esc` | Clear selection and filters |
 
-Light and dark mode follow your OS setting.
+The "日本語" / "English" button switches the language, and the choice is remembered. Light and dark mode follow your OS setting.
 
 ## Options
 

@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="ja">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -14,19 +14,20 @@
       <span class="root" id="root-path"></span>
     </div>
     <div class="search">
-      <input id="search" type="search" placeholder="コンポーネントを検索（/）" autocomplete="off" spellcheck="false">
+      <input id="search" type="search" placeholder="" data-i18n-placeholder="searchPlaceholder" autocomplete="off" spellcheck="false">
       <ul id="search-results" class="results" role="listbox" hidden></ul>
     </div>
     <div class="tools">
-      <label title="template で描画せず import だけしている依存（ルート定義、h()、変数経由など）"><input type="checkbox" id="opt-script" checked> script 依存</label>
-      <label id="opt-impact-wrap" title="--since で指定した差分の影響範囲を強調する" hidden><input type="checkbox" id="opt-impact" checked> 変更の影響</label>
-      <label title="main.ts や router.ts など .vue を import している JS/TS"><input type="checkbox" id="opt-modules" checked> JS/TS モジュール</label>
-      <button id="btn-fit" type="button" title="全体を表示（F）">全体表示</button>
+      <label data-i18n-title="optScriptTitle"><input type="checkbox" id="opt-script" checked> <span data-i18n="optScript"></span></label>
+      <label id="opt-impact-wrap" data-i18n-title="optImpactTitle" hidden><input type="checkbox" id="opt-impact" checked> <span data-i18n="optImpact"></span></label>
+      <label data-i18n-title="optModulesTitle"><input type="checkbox" id="opt-modules" checked> <span data-i18n="optModules"></span></label>
+      <button id="btn-fit" type="button" data-i18n="fit" data-i18n-title="fitTitle"></button>
+      <button id="btn-lang" type="button" data-i18n-title="langTitle"></button>
     </div>
   </header>
   <div class="focus-bar" id="focus-bar" hidden></div>
   <main>
-    <svg id="canvas" aria-label="コンポーネント依存グラフ">
+    <svg id="canvas" data-i18n-label="canvas">
       <defs>
         <marker id="arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
           <path d="M0,0.5 L7.5,4 L0,7.5 z" class="arrow"></path>
