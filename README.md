@@ -15,11 +15,17 @@ Vue プロジェクトを静的解析して、**コンポーネントの依存�
 
 ## クイックスタート
 
-npm にはまだ公開していないため、GitHub から直接実行する。
+Node.js 20 以上が必要。インストールせずに実行できる。
 
 ```sh
 cd your-vue-app
-npx github:kotta-27/vue-component-graph
+npx vue-component-graph
+```
+
+チームで使うなら devDependencies に入れておく。
+
+```sh
+npm install -D vue-component-graph
 ```
 
 解析結果の HTML がブラウザで開く。ターミナルにも要約が出る。
@@ -36,7 +42,7 @@ HTML の出力先は `node_modules/.cache/vue-component-graph/graph.html`。`nod
 ## 変更の影響を調べる（`--since`）
 
 ```sh
-npx github:kotta-27/vue-component-graph --since main
+npx vue-component-graph --since main
 ```
 
 `main` との merge-base から今の作業ツリーまでの差分（未コミット・未追跡のファイルを含む）を起点に、import と template での使用を逆に辿る。影響を受けるコンポーネントと、確認すべきページを出す。
@@ -66,8 +72,20 @@ npx github:kotta-27/vue-component-graph --since main
 
 MCP サーバーとして起動でき、Claude Code などのエージェントがツールとして呼び出せる。grep では見つからない依存（自動 import、グローバル登録、kebab-case のタグ）や「どの URL に出るか」を、エージェントが正確に調べられる。
 
+Claude Code の場合：
+
 ```sh
-claude mcp add -s user vue-component-graph -- npx -y github:kotta-27/vue-component-graph mcp
+claude mcp add -s user vue-component-graph -- npx -y vue-component-graph mcp
+```
+
+ほかのクライアントでは、設定ファイルに次を書く。
+
+```json
+{
+  "mcpServers": {
+    "vue-component-graph": { "command": "npx", "args": ["-y", "vue-component-graph", "mcp"] }
+  }
+}
 ```
 
 | ツール | 入力 | 返すもの |
@@ -213,6 +231,8 @@ vue-component-graph [dir] [options]
 
 - **動的なルート**：`path` が式のルート（例：`` `/x/${id}` ``）は 1 件として扱う。実際に何本の URL になるかは分からない
 - **描画関数**：`h()` や JSX / TSX で描画するコンポーネントは、template の依存として検出できない（import されていれば「import のみ」として出る）
+- **Vite のファイルベースルーティング**：vue-router の Vite プラグイン（旧 unplugin-vue-router）や vite-plugin-pages の `src/pages/` からはルートを作らない。ページのコンポーネント自体は解析し、未使用とは判定しない
+- **生成されない `components.d.ts`**：unplugin-vue-components の自動 import は、開発サーバーが生成する `components.d.ts` を読む。リポジトリに含めていないと解決できない。Nuxt は `.nuxt/` が無くても `components/` から推定するが、`nuxt.config` で追加したディレクトリやレイヤーは `nuxi prepare` 後でないと解決できない
 - **プラグイン登録**：プラグインがグローバル登録するコンポーネント（`RouterView` など）は外部コンポーネントとして扱う
 - **template 言語**：pug などの template は解析しない
 - **composable**：composable 自体はグラフのノードにならない（影響分析では辿る）
