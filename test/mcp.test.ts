@@ -58,6 +58,8 @@ describe('MCP server', () => {
     const { text } = await call('who_uses', { component: 'SideNav' })
     expect(text).toContain('router.ts → SideNav')
     expect(text).toContain('/settings/profile')
+    expect(text).toMatch(/^読み込むモジュール \(\d+\): .*router\.ts/m)
+    expect(text).not.toMatch(/^祖先 .*router\.ts/m)
   })
 
   it('impact with files (hypothetical change)', async () => {

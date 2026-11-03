@@ -256,12 +256,15 @@ export function whoUses(graph: Graph, query: string): string[] {
   }
   walk(n.id, [n.id])
 
-  const ancestors = new Set(paths.flat())
-  ancestors.delete(n.id)
   const byId = new Map(graph.nodes.map((x) => [x.id, x]))
+  const ancestors = [...new Set(paths.flat())].filter((id) => id !== n.id)
+  // router.ts などのモジュールはコンポーネントの祖先と分けて数える
+  const ancestorComps = ancestors.filter((id) => byId.get(id)?.kind === 'component')
+  const ancestorModules = ancestors.filter((id) => byId.get(id)?.kind !== 'component')
   const lines = [`${n.name} (${n.id})`]
   lines.push(`直接の親 (${direct.length}):`, ...(direct.length ? direct.map((id) => `  - ${label(byId.get(id)!)}`) : ['  なし']))
-  lines.push(`祖先 (${ancestors.size}): ${[...ancestors].map(nameOf).join(', ') || 'なし'}`)
+  lines.push(`祖先 (${ancestorComps.length}): ${ancestorComps.map(nameOf).join(', ') || 'なし'}`)
+  if (ancestorModules.length) lines.push(`読み込むモジュール (${ancestorModules.length}): ${ancestorModules.map(nameOf).join(', ')}`)
   if (direct.length) {
     lines.push(`経路${truncated ? `（先頭 ${LIMIT} 件）` : ''}:`)
     for (const p of paths) lines.push(`  ${p.map(nameOf).join(' → ')}`)

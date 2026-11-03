@@ -91,7 +91,8 @@ PriceTag (src/components/product/PriceTag.vue)
   - ProductCard (src/components/product/ProductCard.vue)
   - ProductView (src/views/ProductView.vue)
   - OrdersView (src/views/account/OrdersView.vue)
-祖先 (7): router.ts, CartView, CartItem, HomeView, ProductCard, ProductView, OrdersView
+祖先 (6): CartView, CartItem, HomeView, ProductCard, ProductView, OrdersView
+読み込むモジュール (1): router.ts
 経路:
   router.ts → CartView → CartItem → PriceTag
   router.ts → HomeView → ProductCard → PriceTag
