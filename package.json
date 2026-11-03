@@ -1,7 +1,7 @@
 {
   "name": "vue-component-graph",
   "version": "0.1.0",
-  "description": "Vue コンポーネントの依存関係と、それぞれが表示されるページを可視化する CLI。変更の影響範囲も調べられる",
+  "description": "Visualize Vue component dependencies and the pages each component appears on, find the impact of changes, and expose it all to AI agents over MCP",
   "author": "Kota Mizuno",
   "repository": {
     "type": "git",
