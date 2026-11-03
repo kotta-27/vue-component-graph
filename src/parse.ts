@@ -45,7 +45,8 @@ export interface RawRoute {
 
 export interface FileInfo {
   file: string
-  kind: 'component' | 'module'
+  /** style は CSS などで、影響分析の依存（@import）だけを持つ */
+  kind: 'component' | 'module' | 'style'
   lines: number
   imports: ImportBinding[]
   /** 変数に束縛されない import（`import './x'`、ルート定義の `() => import()` など） */
@@ -65,6 +66,14 @@ export interface FileInfo {
   tags: string[]
   /** `<component :is="...">` に現れた識別子と文字列 */
   dynamicIs: string[]
+  /** `import.meta.glob()` のパターン */
+  globs: string[]
+  /** `createRouter()` / `new VueRouter()` を呼んでいる */
+  createsRouter: boolean
+  /** トップレベルの別名（`const Perms = withInstall(perms)` → Perms: perms） */
+  aliases: Record<string, string>
+  /** template の src / href、CSS の @import / url() など、コード以外の参照（影響分析用） */
+  assets: string[]
   errors: string[]
 }
 
@@ -89,16 +98,29 @@ export function parseFile(file: string): FileInfo {
     appRoots: [],
     tags: [],
     dynamicIs: [],
+    globs: [],
+    createsRouter: false,
+    aliases: {},
+    assets: [],
     errors: [],
   }
 
-  if (info.kind === 'component') {
+  if (STYLE_RE.test(file)) {
+    info.kind = 'style'
+    info.assets.push(...styleRefs(source))
+  } else if (file.endsWith('.md')) {
+    parseMarkdown(source, info)
+  } else if (info.kind === 'component') {
     const { descriptor, errors } = parseSfc(source, { filename: file })
     for (const e of errors) info.errors.push(e.message)
     for (const block of [descriptor.script, descriptor.scriptSetup]) {
       if (block) parseScript(block.content, block.lang ?? 'js', info)
     }
     if (descriptor.template?.ast) walkTemplate(descriptor.template.ast, info)
+    for (const style of descriptor.styles) {
+      if (style.src) info.assets.push(style.src)
+      info.assets.push(...styleRefs(style.content))
+    }
   } else {
     const lang = file.match(/\.(\w+)$/)?.[1] ?? 'js'
     parseScript(source, lang, info)
@@ -121,7 +143,12 @@ function parseScript(code: string, lang: string, info: FileInfo) {
   for (const stmt of ast.program.body) {
     const decl = stmt.type === 'ExportNamedDeclaration' && stmt.declaration ? stmt.declaration : stmt
     if (decl.type === 'VariableDeclaration') {
-      for (const d of decl.declarations) if (d.id.type === 'Identifier') info.locals.push(d.id.name)
+      for (const d of decl.declarations) {
+        if (d.id.type !== 'Identifier') continue
+        info.locals.push(d.id.name)
+        const target = d.init && wrappedLocal(d.init)
+        if (target && target !== d.id.name) info.aliases[d.id.name] = target
+      }
     } else if ((decl.type === 'FunctionDeclaration' || decl.type === 'ClassDeclaration') && decl.id) {
       info.locals.push(decl.id.name)
     }
@@ -144,6 +171,17 @@ function parseScript(code: string, lang: string, info: FileInfo) {
         if (stmt.source) info.reExports.push({ exported, imported: s.local.name, source: stmt.source.value })
         else info.reExports.push({ exported, imported: s.local.name, local: s.local.name })
       }
+      // export const Foo = () => import('./Foo.vue') / withInstall(foo) / Bar
+      if (stmt.declaration?.type === 'VariableDeclaration') {
+        for (const d of stmt.declaration.declarations) {
+          if (d.id.type !== 'Identifier' || !d.init) continue
+          info.reExports.push({ exported: d.id.name, imported: d.id.name, local: wrappedLocal(d.init) ?? d.id.name })
+        }
+      }
+    } else if (stmt.type === 'ExportDefaultDeclaration') {
+      // export default Foo / withInstall(Foo)
+      const local = wrappedLocal(stmt.declaration)
+      if (local) info.reExports.push({ exported: 'default', imported: local, local })
     } else if (stmt.type === 'ExportAllDeclaration' && stmt.exportKind !== 'type') {
       info.reExports.push({ exported: '*', imported: '*', source: stmt.source.value })
     }
@@ -151,12 +189,13 @@ function parseScript(code: string, lang: string, info: FileInfo) {
 
   const bound = new Set<any>()
   walk(ast.program, (node) => {
-    // const Foo = defineAsyncComponent(() => import('./Foo.vue'))
+    // const Foo = defineAsyncComponent(() => import('./Foo.vue')) / () => import('./Foo.vue')
+    // （createRouter({ routes }) のように、中に import() があるだけの値はコンポーネントではない）
     if (node.type === 'VariableDeclarator' && node.id.type === 'Identifier' && node.init) {
-      const found = collectDynamicImports(node.init)
-      if (found.length === 1) {
-        bound.add(found[0].node)
-        info.imports.push({ local: node.id.name, source: found[0].source, imported: 'default', async: true })
+      const found = lazyComponent(node.init)
+      if (found) {
+        bound.add(found.node)
+        info.imports.push({ local: node.id.name, source: found.source, imported: 'default', async: true })
       }
     }
     // components: { Foo, Bar: defineAsyncComponent(...) }
@@ -201,6 +240,12 @@ function parseScript(code: string, lang: string, info: FileInfo) {
         }
       }
     }
+    if (
+      (node.type === 'CallExpression' && node.callee.type === 'Identifier' && node.callee.name === 'createRouter') ||
+      (node.type === 'NewExpression' && node.callee.type === 'Identifier' && /^(Vue)?Router$/.test(node.callee.name))
+    ) {
+      info.createsRouter = true
+    }
     // createApp(App)
     if (
       node.type === 'CallExpression' &&
@@ -212,6 +257,18 @@ function parseScript(code: string, lang: string, info: FileInfo) {
     }
     const dyn = dynamicImportSource(node)
     if (dyn && !bound.has(node)) info.bareImports.push({ source: dyn, async: true })
+    // import.meta.glob('./views/**/*.vue') / glob(['a', '!b'])
+    if (
+      node.type === 'CallExpression' &&
+      node.callee.type === 'MemberExpression' &&
+      node.callee.property.type === 'Identifier' &&
+      /^glob(Eager)?$/.test(node.callee.property.name) &&
+      node.callee.object.type === 'MetaProperty'
+    ) {
+      const arg = node.arguments[0]
+      const items = arg?.type === 'ArrayExpression' ? arg.elements : [arg]
+      for (const el of items) if (el?.type === 'StringLiteral') info.globs.push(el.value)
+    }
   })
 
   findRoutes(ast.program, code, info.routes)
@@ -272,6 +329,48 @@ function toRoute(obj: any, code: string): RawRoute | null {
   return { path, dynamic, refs, children, redirect: props.has('redirect') }
 }
 
+export const STYLE_RE = /\.(css|scss|sass|less|styl|stylus|pcss|postcss)$/
+
+/** CSS の @import / @use / @forward と url() のうち、ファイルを指すもの */
+function styleRefs(css: string): string[] {
+  const out: string[] = []
+  const code = css.replace(/\/\*[\s\S]*?\*\//g, '')
+  for (const m of code.matchAll(/@(?:import|use|forward)\s+(?:url\()?\s*(['"])([^'"]+)\1/g)) out.push(m[2])
+  for (const m of code.matchAll(/url\(\s*(['"]?)([^'")]+)\1\s*\)/g)) out.push(m[2])
+  return out.filter(isLocalRef)
+}
+
+/** http: や data: ではなく、プロジェクト内のファイルを指す参照 */
+function isLocalRef(ref: string): boolean {
+  return !/^(?:[a-z]+:|\/\/|#|\{\{|\$)/i.test(ref) && ref.trim() !== ''
+}
+
+/**
+ * VitePress などの Markdown。<script setup> の import と、本文で使われているコンポーネントのタグを拾う
+ * （コードブロックとインラインコードの中は除く）
+ */
+function parseMarkdown(source: string, info: FileInfo) {
+  info.kind = 'component'
+  for (const m of source.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/g)) {
+    const lang = m[1].match(/lang=["'](\w+)["']/)?.[1] ?? 'js'
+    parseScript(m[2], lang, info)
+  }
+  const body = source
+    .replace(/<script\b[\s\S]*?<\/script>/g, '')
+    .replace(/<style\b[\s\S]*?<\/style>/g, '')
+    .replace(/^(```|~~~)[\s\S]*?^\1/gm, '')
+    .replace(/`[^`\n]*`/g, '')
+  for (const m of body.matchAll(/<([A-Z][\w]*|[a-z][a-z0-9]*(?:-[a-z0-9]+)+)(?=[\s/>])/g)) info.tags.push(m[1])
+}
+
+/** `Foo` や `withInstall(Foo)` のように、そのまま（または包んで）公開している変数名 */
+function wrappedLocal(node: any): string | null {
+  if (node.type === 'Identifier') return node.name
+  if (node.type === 'TSAsExpression' || node.type === 'TSSatisfiesExpression') return wrappedLocal(node.expression)
+  if (node.type === 'CallExpression' && node.arguments[0]?.type === 'Identifier') return node.arguments[0].name
+  return null
+}
+
 function propKey(p: any): string | null {
   if (p.type !== 'ObjectProperty' && p.type !== 'Property') return null
   if (p.key.type === 'Identifier' && !p.computed) return p.key.name
@@ -287,6 +386,42 @@ function dynamicImportSource(node: any): string | null {
   if (arg?.type === 'StringLiteral') return arg.value
   if (arg?.type === 'TemplateLiteral' && arg.expressions.length === 0) return arg.quasis[0].value.cooked
   return null
+}
+
+/**
+ * 値そのものが遅延読み込みのコンポーネントなら、その import()。
+ * `import('./X.vue')`、`() => import(...)`、`import(...).then(m => m.default)`、`defineAsyncComponent(() => import(...))`、
+ * `defineAsyncComponent({ loader: () => import(...) })` に対応する
+ */
+function lazyComponent(node: any): { node: any; source: string } | null {
+  if (!node) return null
+  const source = dynamicImportSource(node)
+  if (source) return { node, source }
+  switch (node.type) {
+    case 'ArrowFunctionExpression':
+    case 'FunctionExpression': {
+      const body = node.body.type === 'BlockStatement' ? node.body.body.find((s: any) => s.type === 'ReturnStatement')?.argument : node.body
+      return lazyComponent(body)
+    }
+    case 'AwaitExpression':
+    case 'TSAsExpression':
+      return lazyComponent(node.argument ?? node.expression)
+    case 'CallExpression': {
+      // import('./X.vue').then(...)
+      if (node.callee.type === 'MemberExpression') return lazyComponent(node.callee.object)
+      if (node.callee.type === 'Identifier' && node.callee.name === 'defineAsyncComponent') {
+        const arg = node.arguments[0]
+        if (arg?.type === 'ObjectExpression') {
+          const loader = arg.properties.find((p: any) => propKey(p) === 'loader')
+          return loader ? lazyComponent(loader.value) : null
+        }
+        return lazyComponent(arg)
+      }
+      return null
+    }
+    default:
+      return null
+  }
 }
 
 function collectDynamicImports(root: any) {
@@ -317,6 +452,32 @@ const ATTRIBUTE = 6
 const DIRECTIVE = 7
 const TAG_COMPONENT = 1
 
+/**
+ * `:is` の式が取りうるコンポーネント。`cond ? A : B`、`a || B`、`'name'` は候補にするが、
+ * `useIcon(toRaw(x))` のような呼び出しやメンバー参照は実行時に決まるので拾わない
+ */
+function isCandidates(exp: string): string[] {
+  let node: any
+  try {
+    node = (babelParse(`(${exp})`, { plugins: ['typescript'] }).program.body[0] as any).expression
+  } catch {
+    return []
+  }
+  const out: string[] = []
+  const visit = (n: any) => {
+    if (n.type === 'Identifier') out.push(n.name)
+    else if (n.type === 'StringLiteral') out.push(n.value)
+    else if (n.type === 'TemplateLiteral' && !n.expressions.length) out.push(n.quasis[0].value.cooked)
+    else if (n.type === 'ConditionalExpression') (visit(n.consequent), visit(n.alternate))
+    else if (n.type === 'LogicalExpression') (visit(n.left), visit(n.right))
+    else if (n.type === 'TSAsExpression' || n.type === 'TSNonNullExpression') visit(n.expression)
+  }
+  visit(node)
+  return out
+}
+
+const ASSET_ATTRS = new Set(['src', 'href', 'poster', 'srcset', 'xlink:href'])
+
 function walkTemplate(node: any, info: FileInfo) {
   if (node.type === ELEMENT) {
     let isTarget = false
@@ -329,9 +490,13 @@ function walkTemplate(node: any, info: FileInfo) {
           isTarget = true
         }
       } else if (p.type === DIRECTIVE && p.name === 'bind' && p.arg?.content === 'is' && p.exp) {
-        const exp: string = p.exp.content
-        for (const m of exp.matchAll(/(['"`])([\w-]+)\1|[A-Za-z_$][\w$]*/g)) info.dynamicIs.push(m[2] ?? m[0])
+        info.dynamicIs.push(...isCandidates(p.exp.content))
         isTarget = true
+      }
+    }
+    for (const p of node.props) {
+      if (p.type === ATTRIBUTE && ASSET_ATTRS.has(p.name) && p.value && isLocalRef(p.value.content)) {
+        info.assets.push(p.value.content)
       }
     }
     const builtin = BUILTIN_TAGS.has(node.tag.replace(/-/g, '').toLowerCase())

@@ -38,7 +38,8 @@ export function impactLines(graph: Graph, impact: Impact, label: string): string
   const out = [t('impactTitle', label)]
   if (!impact.changed.length) return [...out, `  ${t('impactNone')}`]
   out.push(`  ${t('changedFiles', impact.changed.length)}`)
-  for (const id of impact.changed) out.push(`    ${id}`)
+  const deleted = new Set(impact.deleted)
+  for (const id of impact.changed) out.push(`    ${id}${deleted.has(id) ? t('deletedMark') : ''}`)
   // 変更したファイル自体は上に出ているので、影響を受ける側だけを数える（ビューアと同じ）
   const changed = new Set(impact.changed)
   const affected = impact.affected.filter((id) => !changed.has(id))

@@ -15,19 +15,50 @@ export function pick(graph: Graph, query: string): GraphNode {
   throw new QueryError(t('noMatch', query) + (similar.length ? t('candidates', similar) : ''))
 }
 
-/** 名前の一部が一致するコンポーネント（打ち間違いの候補） */
+/** 打ち間違いの候補。前方の一部が含まれるか、編集距離が近いもの（近い順） */
 function similarNames(graph: Graph, query: string): string[] {
   const q = toPascal(query.split('/').pop()!).toLowerCase()
   const head = q.slice(0, Math.max(3, q.length - 2))
+  const limit = Math.max(2, Math.floor(q.length / 4))
   return graph.nodes
-    .filter((n) => n.kind === 'component' && n.name.toLowerCase().includes(head))
-    .map((n) => n.label)
+    .filter((n) => n.kind === 'component')
+    .map((n) => {
+      const name = toPascal(n.name.split('/').pop()!).toLowerCase()
+      const d = editDistance(q, name)
+      return { n, score: name.includes(head) ? Math.min(d, limit) : d }
+    })
+    .filter((x) => x.score <= limit)
+    .sort((a, b) => a.score - b.score || a.n.label.localeCompare(b.n.label))
+    .map((x) => x.n.label)
     .slice(0, 10)
+}
+
+/** 隣り合う文字の入れ替えを 1 と数える編集距離（Damerau–Levenshtein の簡易版） */
+function editDistance(a: string, b: string): number {
+  const d = Array.from({ length: a.length + 1 }, (_, i) => [i, ...Array<number>(b.length).fill(0)])
+  for (let j = 1; j <= b.length; j++) d[0][j] = j
+  for (let i = 1; i <= a.length; i++) {
+    for (let j = 1; j <= b.length; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1
+      d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + cost)
+      if (i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) d[i][j] = Math.min(d[i][j], d[i - 2][j - 2] + 1)
+    }
+  }
+  return d[a.length][b.length]
 }
 
 /** ルートが 0 件のときの理由 */
 export function noRoutesReason(graph: Graph): string {
+  if (graph.vitepress) return t('vitepressPages')
   return graph.unsupportedPagesDir ? t('unsupportedPages', graph.unsupportedPagesDir) : t('noRouteDefs')
+}
+
+/** ライブラリ由来（パッケージ名付き）と、解決できなかったタグに分ける */
+export function splitExternals(externals: string[]): { libraries: string[]; unresolved: string[] } {
+  return {
+    libraries: externals.filter((x) => x.endsWith(')')),
+    unresolved: externals.filter((x) => !x.endsWith(')')),
+  }
 }
 
 function label(n: GraphNode): string {
@@ -36,7 +67,13 @@ function label(n: GraphNode): string {
 
 function pagesLine(graph: Graph, n: GraphNode): string[] {
   if (n.shell) return [t('pagesShell')]
-  if (!n.routes.length) return [t('pagesNone', graph.routes.length ? t('unreachable') : noRoutesReason(graph))]
+  if (!n.routes.length) {
+    // import.meta.glob や動的 import でだけ読まれる画面は「辿れない」と言い切らない
+    const users = graph.edges.filter((e) => e.to === n.id && e.from !== n.id)
+    const dynamicOnly = users.length > 0 && users.every((e) => e.async && e.type === 'script' && !e.from.endsWith('.vue'))
+    if (dynamicOnly) return [t('pagesNone', t('loadedDynamically', users.map((e) => e.from)))]
+    return [t('pagesNone', graph.routes.length ? t('unreachable') : noRoutesReason(graph))]
+  }
   return [t('pagesOf', n.routes.length), ...routeLines(graph, n.routes).map((l) => `  ${l}`)]
 }
 
@@ -62,7 +99,9 @@ export function componentInfo(graph: Graph, query: string): string[] {
   if (n.kind === 'component') lines.push(...pagesLine(graph, n))
   lines.push(t('usedBy', parents.length), ...(parents.length ? parents.map((e) => edgeLine(e.from, e)) : [`  ${t('none')}`]))
   lines.push(t('uses', children.length), ...(children.length ? children.map((e) => edgeLine(e.to, e)) : [`  ${t('none')}`]))
-  if (n.externals.length) lines.push(t('externals', n.externals))
+  const { libraries, unresolved } = splitExternals(n.externals)
+  if (libraries.length) lines.push(t('externals', libraries))
+  if (unresolved.length) lines.push(t('unresolved', unresolved))
   return lines
 }
 
@@ -138,5 +177,5 @@ export function issuesReport(graph: Graph): string[] {
 export function summaryLine(graph: Graph): string {
   const comps = graph.nodes.filter((n) => n.kind === 'component').length
   const edges = graph.edges.filter((e) => e.from !== e.to).length
-  return `${comps} components, ${edges} edges, ${graph.routes.length} routes`
+  return t('summary', comps, edges, graph.routes.length)
 }

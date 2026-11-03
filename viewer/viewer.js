@@ -47,6 +47,10 @@
       cycles: '循環参照',
       recursiveComponents: '再帰コンポーネント',
       externalsByFiles: '外部コンポーネント（使用ファイル数）',
+      unresolvedByFiles: '解決できないタグ（使用ファイル数）',
+      unresolvedNote: 'プラグインで登録されたものか、import 漏れ',
+      unresolvedN: (n) => `解決できないタグ（${n}）`,
+      vitepressPages: 'VitePress のサイトです。ページは Markdown なのでルートは列挙しません（Markdown から使われるコンポーネントは解析しています）',
       warnings: (n) => `解析の警告（${n}）`,
       none: 'なし',
       listScope: (v, total) => `表示中の ${v} 件（全体 ${total} 件）`,
@@ -69,6 +73,7 @@
       pagesN: (n) => `表示されるページ（${n}）`,
       shellNote: (name) => `全ページ（${name} の配下で常に表示）`,
       unreachable: 'ルートから辿れない',
+      loadedDynamically: (mods) => `${mods} から動的に読み込まれるため、ページは実行時に決まる`,
       noRoutes: 'ルート定義が見つからない',
       noRoutesFound: 'ルート定義が見つかりませんでした',
       unsupportedPages: (dir) =>
@@ -127,6 +132,10 @@
       cycles: 'Circular references',
       recursiveComponents: 'Recursive components',
       externalsByFiles: 'External components (files using them)',
+      unresolvedByFiles: 'Unresolved tags (files using them)',
+      unresolvedNote: 'Registered by a plugin, or a missing import',
+      unresolvedN: (n) => `Unresolved tags (${n})`,
+      vitepressPages: "This is a VitePress site. Pages are Markdown, so routes aren't listed (components used from Markdown are analyzed)",
       warnings: (n) => `Analysis warnings (${n})`,
       none: 'None',
       listScope: (v, total) => `Showing ${v} of ${total}`,
@@ -149,6 +158,7 @@
       pagesN: (n) => `Pages (${n})`,
       shellNote: (name) => `Every page (always rendered under ${name})`,
       unreachable: 'Not reachable from any route',
+      loadedDynamically: (mods) => `Loaded dynamically by ${mods}, so its pages are decided at runtime`,
       noRoutes: 'No route definitions found',
       noRoutesFound: 'No route definitions found',
       unsupportedPages: (dir) =>
@@ -809,17 +819,24 @@
       h += `<ul>${sc.recursive.map((id) => nodeItem(id)).join('')}</ul>`
     }
 
-    const ext = new Map()
-    for (const n of sc.nodes) for (const x of n.externals) ext.set(x, (ext.get(x) || 0) + 1)
-    if (ext.size) {
-      h += `<h3>${t('externalsByFiles')}</h3><ul>`
-      h += [...ext]
+    // ライブラリ由来（パッケージ名付き）と、解決できなかったタグを分けて数える
+    const counts = (pick) => {
+      const m = new Map()
+      for (const n of sc.nodes) for (const x of n.externals.filter(pick)) m.set(x, (m.get(x) || 0) + 1)
+      return m
+    }
+    const countList = (m) =>
+      '<ul>' +
+      [...m]
         .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
         .slice(0, 20)
         .map(([name, c]) => `<li>${esc(name)}<span class="tag">${c}</span></li>`)
-        .join('')
-      h += '</ul>'
-    }
+        .join('') +
+      '</ul>'
+    const libraries = counts(isLibrary)
+    const unresolved = counts((x) => !isLibrary(x))
+    if (libraries.size) h += `<h3>${t('externalsByFiles')}</h3>` + countList(libraries)
+    if (unresolved.size) h += `<h3 title="${t('unresolvedNote')}">${t('unresolvedByFiles')}</h3>` + countList(unresolved)
 
     if (DATA.warnings.length) {
       h += `<h3>${t('warnings', DATA.warnings.length)}</h3><ul class="warnings">`
@@ -879,9 +896,16 @@
     h += parents.length ? `<ul>${parents.map((e) => nodeItem(e.from, edgeTags(e))).join('')}</ul>` : `<p class="empty">${t('none')}</p>`
     h += `<h3>${t('uses', children.length)}</h3>`
     h += children.length ? `<ul>${children.map((e) => nodeItem(e.to, edgeTags(e))).join('')}</ul>` : `<p class="empty">${t('none')}</p>`
-    if (n.externals.length) {
-      h += `<h3>${t('externals', n.externals.length)}</h3><ul>`
-      h += n.externals.map((x) => `<li>${esc(x)}</li>`).join('')
+    const libs = n.externals.filter(isLibrary)
+    const unresolvedTags = n.externals.filter((x) => !isLibrary(x))
+    if (unresolvedTags.length) {
+      h += `<h3 title="${t('unresolvedNote')}">${t('unresolvedN', unresolvedTags.length)}</h3><ul>`
+      h += unresolvedTags.map((x) => `<li>${esc(x)}</li>`).join('')
+      h += '</ul>'
+    }
+    if (libs.length) {
+      h += `<h3>${t('externals', libs.length)}</h3><ul>`
+      h += libs.map((x) => `<li>${esc(x)}</li>`).join('')
       h += '</ul>'
     }
     side.innerHTML = h
@@ -907,12 +931,24 @@
       return `<h3>${t('pages')}</h3><p class="note">${t('shellNote', esc(shellNames()[0] || 'App'))}</p>`
     }
     if (!n.routes.length) {
-      return `<h3>${t('pages')}</h3><p class="empty">${DATA.routes.length ? t('unreachable') : noRoutesText()}</p>`
+      // import.meta.glob や動的 import でだけ読まれる画面は「辿れない」と言い切らない
+      const users = parentsOf.get(n.id)
+      const dynamicOnly = users.length > 0 && users.every((e) => e.async && e.type === 'script' && !e.from.endsWith('.vue'))
+      const reason = dynamicOnly
+        ? t('loadedDynamically', users.map((e) => esc(e.from)).join(', '))
+        : DATA.routes.length ? t('unreachable') : noRoutesText()
+      return `<h3>${t('pages')}</h3><p class="empty">${reason}</p>`
     }
     return `<h3>${t('pagesN', n.routes.length)}</h3><ul>${n.routes.map(routeItem).join('')}</ul>`
   }
 
+  /** 外部コンポーネントのうち、パッケージ名が分かっているもの（"ElButton (element-plus)"） */
+  function isLibrary(x) {
+    return x.endsWith(')')
+  }
+
   function noRoutesText() {
+    if (DATA.vitepress) return t('vitepressPages')
     return DATA.unsupportedPagesDir ? t('unsupportedPages', esc(DATA.unsupportedPagesDir)) : t('noRoutesFound')
   }
 

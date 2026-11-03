@@ -1,22 +1,23 @@
 import { execFileSync } from 'node:child_process'
+import { existsSync } from 'node:fs'
 import { relative, resolve, sep } from 'node:path'
 import type { FileDeps, Graph } from './graph'
 
 export interface Impact {
   since: string
-  /** 変更されたファイルのうち、解析対象に関係するもの */
+  /** 変更されたファイルのうち、解析対象に関係するもの（削除したファイルを含む） */
   changed: string[]
+  /** changed のうち削除されたファイル */
+  deleted: string[]
   /** 変更の影響を受けるコンポーネント（変更されたものを含む） */
   affected: string[]
   /** 確認すべきルート（Graph.routes の添字） */
   routes: number[]
-  /** 全ページに影響する（App の配下や、エントリが読むグローバル CSS の変更） */
+  /** 全ページに影響する（App の配下や、エントリが読むモジュール・CSS の変更） */
   everywhere: boolean
 }
 
-const SCRIPT_RE = /\.(vue|[cm]?[jt]sx?)$/
-
-/** `since` との merge-base からの変更（未コミット・未追跡を含む）を絶対パスで返す */
+/** `since` との merge-base からの変更（未コミット・未追跡・削除を含む）を絶対パスで返す */
 export function gitChangedFiles(root: string, since: string): string[] {
   const git = (...args: string[]) =>
     execFileSync('git', args, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
@@ -29,25 +30,74 @@ export function gitChangedFiles(root: string, since: string): string[] {
   return [...new Set(lines.filter(Boolean).map((f) => resolve(top, f)))]
 }
 
-export function analyzeImpact(graph: Graph, deps: FileDeps, changedFiles: string[], since: string): Impact {
+const ANALYZED_RE = /\.(vue|[cm]?[jt]sx?)$/
+
+/**
+ * 変更から、影響を受けるコンポーネントと確認すべきページを求める。
+ * - コンポーネントの変更は、それを描画・import するコンポーネントと通常のモジュール（h() で使う composable など）に伝わる。
+ *   ルート定義・createApp・バレルなどのハブには伝えない（ページは routes から求めるので、ハブを使う側は無関係）
+ * - モジュール・CSS・画像の変更は、参照しているもの全部に伝わる。エントリに届けば全ページ、ルート定義に届けばそのルート。
+ *   ルート定義・ルーター・エントリ・グローバル登録・glob は行き止まりで、その先（ストア経由の利用者など）には伝えない
+ * - 遅延 import（ルートの () => import() など）は、使う側がコンポーネントのときだけ伝わる
+ */
+export function analyzeImpact(
+  graph: Graph,
+  deps: FileDeps,
+  changedFiles: string[],
+  since: string,
+  /** 「これらを変えたら」と仮定したファイル（まだ無くてもよいので、削除扱いにしない） */
+  hypothetical: string[] = [],
+): Impact {
   const rel = (f: string) => relative(graph.root, f).split(sep).join('/')
   const nodeById = new Map(graph.nodes.map((n) => [n.id, n]))
+  const isComponent = (id: string) => nodeById.get(id)?.kind === 'component'
 
-  // 「誰に import / 使用されているか」の逆引き
-  const users = new Map<string, Set<string>>()
-  const link = (from: string, to: string) => {
-    if (from === to) return
-    if (!users.has(to)) users.set(to, new Set())
-    users.get(to)!.add(from)
+  const reverse = (forward: Map<string, Set<string>>) => {
+    const users = new Map<string, Set<string>>()
+    for (const [from, targets] of forward) {
+      for (const to of targets) {
+        if (from === to) continue
+        if (!users.has(to)) users.set(to, new Set())
+        users.get(to)!.add(from)
+      }
+    }
+    return users
   }
-  for (const [from, targets] of deps) for (const to of targets) link(from, to)
-  for (const e of graph.edges) link(e.from, e.to) // グローバル登録・自動 import は import 文がない
+  const staticUsers = reverse(deps.static)
+  const lazyUsers = reverse(deps.lazy)
+  // グローバル登録・自動 import は import 文がないので、コンポーネント間の辺も使う
+  const componentUsers = new Map<string, Set<string>>()
+  for (const e of graph.edges) {
+    if (e.from === e.to || !isComponent(e.from)) continue
+    if (!componentUsers.has(e.to)) componentUsers.set(e.to, new Set())
+    componentUsers.get(e.to)!.add(e.from)
+  }
 
-  const changed = changedFiles.map(rel).filter((id) => deps.has(id) || users.has(id) || nodeById.has(id))
+  const known = (id: string) => deps.static.has(id) || staticUsers.has(id) || lazyUsers.has(id) || nodeById.has(id)
+  const assumed = new Set(hypothetical)
+  const deleted = changedFiles
+    .filter((f) => !assumed.has(f) && !existsSync(f))
+    .map(rel)
+    .filter((id) => !id.startsWith('..') && (ANALYZED_RE.test(id) || (graph.vitepress && id.endsWith('.md'))))
+  const changed = [...new Set([...changedFiles.map(rel).filter(known), ...deleted])]
+
+  const usersOf = (id: string): string[] => {
+    const out = new Set(componentUsers.get(id))
+    for (const u of staticUsers.get(id) ?? []) {
+      if (isComponent(id) && deps.hubs.has(u)) continue
+      out.add(u)
+    }
+    for (const u of lazyUsers.get(id) ?? []) if (isComponent(u)) out.add(u)
+    return [...out]
+  }
+
   const seen = new Set(changed)
   const queue = [...changed]
   while (queue.length) {
-    for (const user of users.get(queue.shift()!) ?? []) {
+    const id = queue.shift()!
+    // ルート定義・ルーター・エントリなどは行き止まり（影響はルートと「全ページ」で表す）
+    if (deps.sinks.has(id)) continue
+    for (const user of usersOf(id)) {
       if (!seen.has(user)) {
         seen.add(user)
         queue.push(user)
@@ -55,20 +105,26 @@ export function analyzeImpact(graph: Graph, deps: FileDeps, changedFiles: string
     }
   }
 
-  const affected = [...seen].filter((id) => nodeById.get(id)?.kind === 'component').sort()
+  const affected = [...seen].filter(isComponent).sort()
   const routes = new Set<number>()
-  let everywhere = false
+  let everywhere = graph.entries.some((id) => seen.has(id))
   for (const id of affected) {
     const n = nodeById.get(id)!
     if (n.shell) everywhere = true
     for (const r of n.routes) routes.add(r)
   }
-  // main.ts などが直接読む CSS 等は全ページに効く
-  for (const entry of graph.entries) {
-    if (changed.some((id) => !SCRIPT_RE.test(id) && deps.get(entry)?.has(id))) everywhere = true
-  }
-
+  // ルート定義のファイル自体（またはそれが使うモジュール）が変わったら、そこで定義したルート
+  graph.routes.forEach((r, i) => {
+    if (seen.has(r.source)) routes.add(i)
+  })
   if (everywhere) graph.routes.forEach((_, i) => routes.add(i))
 
-  return { since, changed: changed.sort(), affected, routes: [...routes].sort((a, b) => a - b), everywhere }
+  return {
+    since,
+    changed: changed.sort(),
+    deleted: deleted.sort(),
+    affected,
+    routes: [...routes].sort((a, b) => a - b),
+    everywhere,
+  }
 }

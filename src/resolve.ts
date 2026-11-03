@@ -1,7 +1,8 @@
 import { existsSync, readFileSync, statSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 
-const EXTS = ['.vue', '.ts', '.tsx', '.js', '.jsx', '.mts', '.mjs']
+// Vite・webpack と同じくスクリプトを先に試す（Foo/ に index.ts と index.vue があれば index.ts）
+const EXTS = ['.ts', '.tsx', '.js', '.jsx', '.mts', '.mjs', '.vue']
 
 interface PathAlias {
   prefix: string

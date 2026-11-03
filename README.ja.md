@@ -74,8 +74,10 @@ npx vue-component-graph --since main
   <img alt="usePrice.ts の変更が影響するコンポーネントとページを強調表示しているところ" src="docs/impact-light.png">
 </picture>
 
-- `.vue` 以外の変更も辿る（composable、ユーティリティ、`?raw` で読み込むファイルなど）
-- `createApp(App)` の配下にある部品（ヘッダーなど）や、エントリが読み込むグローバル CSS が変わったときは「全ページに影響」と判定する
+- `.vue` 以外の変更も辿る（composable、ユーティリティ、`?raw` で読み込むファイル、`@import` で読み込む CSS、template で参照する画像（`<img src="@/assets/logo.svg">`）など）
+- `createApp(App)` の配下にある部品（ヘッダーなど）や、エントリが読み込むもの（グローバル CSS、プラグイン）が変わったときは「全ページに影響」と判定する
+- 部品の変更を、ルーターやストアを経由して広げない。ルート定義・`createRouter`・`createApp`・グローバル登録は部品を集めるだけで、ページはルート定義から求める
+- 削除したファイルは「（削除）」付きで出す
 
 ## AI エージェントから使う（MCP）
 
@@ -141,12 +143,16 @@ PriceTag (src/components/product/PriceTag.vue)
 | 相対パス・エイリアスの import | `import Foo from './Foo.vue'`、tsconfig の `paths`、`@/` `~/` |
 | template のタグ | `<FooBar>`、`<foo-bar>`、`<component :is="cond ? A : B">` |
 | Options API | `components: { Foo }` |
-| 遅延読み込み | `defineAsyncComponent(() => import('./Foo.vue'))` |
-| グローバル登録 | `app.component('Foo', Foo)` |
+| 遅延読み込み | `defineAsyncComponent(() => import('./Foo.vue'))`、`const Foo = () => import('./Foo.vue')` |
+| グローバル登録 | `app.component('Foo', Foo)`。Vue と同じく、自分自身のファイル名より先に解決する |
 | 自動 import | unplugin-vue-components / Nuxt の `components.d.ts` |
 | Nuxt の components/ | `.nuxt/` が無くても Nuxt の命名規則で解決（`user/Card.vue` → `<UserCard>`、`Lazy` 付き、`#components` からの import） |
-| バレル | `export { default as Foo } from './Foo.vue'` |
+| バレル | `export { default as Foo } from './Foo.vue'`、`export const Foo = withInstall(foo)`、`export const Layout = () => import('./Layout.vue')`。Vite と同じく `Foo/index.ts` を `Foo/index.vue` より優先する |
+| `import.meta.glob` | `import.meta.glob('/src/views/**/*.vue')` に一致するファイルは使用中として扱う（表示されるページは実行時に決まる） |
+| VitePress | Markdown のページで import・使用しているコンポーネントと、`.vitepress/theme` のテーマ |
 | 再帰 | 自分自身をファイル名で描画するコンポーネント |
+
+JSX / TSX で書いたコンポーネントは解析しないが、ファイル付きで示す（`Badge (src/components/Badge/badge.tsx)`）。どこにも解決できないタグ（プラグインでの登録か、import 漏れ）は、ライブラリの部品と分けて出す。
 
 template で描画せず import だけしている依存（ルート定義、`h()`、変数経由など）は「import のみ」として区別して表示する。`.vue` からの名前付き import（エクスポートした型など）はコンポーネントの依存として数えない（`--since` では辿る）。`.vue` を import している `main.ts` や `router.ts` もノードとして出る。
 
@@ -154,8 +160,8 @@ template で描画せず import だけしている依存（ルート定義、`h(
 
 ### ページ（ルート）
 
-- **vue-router**：`children` のネスト、名前付きビュー（`components: { default, side }`）、`.map()` などで作る動的ルート。`redirect` のある親ルートはページとして数えない
-- **Nuxt**：`pages/` のファイルベースルーティング（`[id]`、`[[id]]`、`[...slug]`、`(group)`）
+- **vue-router**：`children` のネスト、名前付きビュー（`components: { default, side }`）、`.map()` などで作る動的ルート、別モジュールから import したルートのコンポーネント。共通レイアウトを描画するだけのルート（`redirect` のある親、複数のルートで共有される Layout の親、レイアウトを指すだけのメニュー項目）はページとして数えない
+- **Nuxt**：`pages/` のファイルベースルーティング（`[id]`、`[[id]]`、`[...slug]`、`(group)`）。`settings.vue` と `settings/index.vue` は 1 つのページ `/settings` として扱う
 - **全ページ共通**：`createApp(App)` の配下と、Nuxt の `app.vue` / `layouts/default.vue`
 
 ### 構造の問題
@@ -207,7 +213,7 @@ vue-component-graph [dir] [options]
 
 ## JSON 出力
 
-`--json` は次の形を出力する。CI やほかのツールと組み合わせるときに使う。
+`--json` は次の形を出力する（`-o` があればそのファイルに書く）。CI やほかのツールと組み合わせるときに使う。
 
 ```ts
 {
@@ -218,9 +224,9 @@ vue-component-graph [dir] [options]
     label: string         // 表示名。名前が重なるときはディレクトリを付ける
     kind: 'component' | 'module' | 'external'
     group: string         // src/ 直下のディレクトリ名
-    entry: boolean        // フレームワークが直接描画する（App.vue、Nuxt の pages/ など）
+    entry: boolean        // フレームワークが直接描画する（App.vue、ファイルベースルーティングの pages/・layouts/、VitePress のページ）
     lines: number
-    externals: string[]   // 使っている外部コンポーネント
+    externals: string[]   // ライブラリと JSX/TSX は "名前 (パッケージかファイル)"、解決できないものは "名前" だけ
     routes: number[]      // 表示されるページ（routes の添字）
     shell: boolean        // 全ページ共通
   }[]
@@ -239,7 +245,8 @@ vue-component-graph [dir] [options]
   entries: string[]       // createApp() を呼んでいるモジュール
   warnings: string[]
   unsupportedPagesDir?: string  // 読み取れないファイルベースルーティングのディレクトリ
-  impact?: { since: string; changed: string[]; affected: string[]; routes: number[]; everywhere: boolean }
+  vitepress?: boolean           // VitePress のサイト（ページは Markdown で、ルートは列挙しない）
+  impact?: { since: string; changed: string[]; deleted: string[]; affected: string[]; routes: number[]; everywhere: boolean }
 }
 ```
 
@@ -248,11 +255,13 @@ vue-component-graph [dir] [options]
 静的解析なので、実行時にしか決まらないものは分からない。
 
 - **動的なルート**：`path` が式のルート（例：`` `/x/${id}` ``）は 1 件として扱う。実際に何本の URL になるかは分からない
-- **描画関数**：`h()` や JSX / TSX で描画するコンポーネントは、template の依存として検出できない（import されていれば「import のみ」として出る）
-- **Vite のファイルベースルーティング**：vue-router の Vite プラグイン（旧 unplugin-vue-router）や vite-plugin-pages の `src/pages/` からはルートを作らない。その旨を出力し、ページのコンポーネント自体は解析して、未使用とは判定しない
+- **描画関数**：`h()` や JSX / TSX で描画するコンポーネントは、template の依存として検出できない（import されていれば「import のみ」として出る）。JSX / TSX のファイル自体も解析しない
+- **Vite のファイルベースルーティング**：vue-router の Vite プラグイン（旧 unplugin-vue-router）や vite-plugin-pages の `src/pages/` からはルートを作らない。その旨を出力し、ページとレイアウトのコンポーネント自体は解析して、未使用とは判定しない
+- **サーバーから受け取るルート**：実行時に作るルートのために `import.meta.glob` で読む画面は使用中として扱うが、どのページに出るかは分からない
+- **VitePress**：ルートは列挙しない。Markdown から使われるコンポーネントは解析する
 - **モノレポ**：パッケージごとに実行する。ほかのパッケージからの import は見えないので、別パッケージだけが使う部品は未使用と出る
 - **Vue 2**：Vue 3 の SFC コンパイラで解析する。結果は使えるが、Vue 3 で廃止された構文（`<template functional>` など）は解析の警告として出る
-- **生成されない `components.d.ts`**：unplugin-vue-components の自動 import は、開発サーバーが生成する `components.d.ts` を読む。リポジトリに含めていないと解決できない。Nuxt は `.nuxt/` が無くても `components/` から推定するが、`nuxt.config` で追加したディレクトリやレイヤーは `nuxi prepare` 後でないと解決できない
+- **生成されない `components.d.ts`**：unplugin-vue-components の自動 import は、開発サーバーが生成する `components.d.ts` を読む。リポジトリに含めていないと解決できない。存在しないファイルを指す登録は警告として出す。Nuxt は `.nuxt/` が無くても `components/` から推定するが、`nuxt.config` で追加したディレクトリやレイヤーは `nuxi prepare` 後でないと解決できない
 - **プラグイン登録**：プラグインがグローバル登録するコンポーネント（`RouterView` など）は外部コンポーネントとして扱う
 - **template 言語**：pug などの template は解析しない
 - **composable**：composable 自体はグラフのノードにならない（影響分析では辿る）

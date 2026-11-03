@@ -13,6 +13,12 @@ const ja = {
   optNoOpen: '生成後にブラウザで開かない',
   optLang: '出力の言語（ja / en）。既定は VUE_COMPONENT_GRAPH_LANG、なければ LANG から決める',
   cmdMcp: 'MCP サーバーとして起動する（stdio）',
+  helpHelp: 'このヘルプを表示',
+  helpVersion: 'バージョンを表示',
+  helpTitle: (title: string) =>
+    title.startsWith('For more info')
+      ? 'コマンドごとの詳しい使い方は --help で確認できます'
+      : ({ Usage: '使い方', Commands: 'コマンド', Options: 'オプション', Examples: '例' } as Record<string, string>)[title] ?? title,
   optRoot: 'ツールで root を省略したときのプロジェクト（既定: 起動ディレクトリ）',
 
   // CLI・MCP 共通
@@ -84,6 +90,14 @@ const ja = {
   unsupportedPages: (dir: string) =>
     `ルート定義が見つかりません。${dir}/ はファイルベースルーティング（vue-router の Vite プラグイン、vite-plugin-pages など）と思われますが、まだ対応していません（ページのコンポーネント自体は解析しています）`,
   unreachable: 'どのルートからも辿れない',
+  loadedDynamically: (modules: string[]) => `${modules.join(', ')} から動的に読み込まれるため、ページは実行時に決まる`,
+  vitepressPages:
+    'VitePress のサイトです。ページは Markdown なのでルートは列挙しません（Markdown から使われるコンポーネントは解析しています）',
+  staleAutoImport: (dts: string, spec: string) => `${dts}: ${spec} は存在しません（components.d.ts が古い可能性があります）`,
+  summary: (components: number, edges: number, routes: number) =>
+    `コンポーネント ${components}、依存 ${edges}、ルート ${routes}`,
+  deletedMark: '（削除）',
+  unresolved: (names: string[]) => `解決できないタグ（プラグインで登録されたものか、import 漏れ）: ${names.join(', ')}`,
   parentRoutes: (names: string[]) => `親: ${names.join(' > ')}`,
   namedViews: (names: string[]) => `名前付きビュー: ${names.join(', ')}`,
   routeNotes: (notes: string[]) => `（${notes.join(' / ')}）`,
@@ -119,6 +133,9 @@ const en: Messages = {
   optNoOpen: "Don't open the browser after generating",
   optLang: 'Output language (ja / en). Defaults to VUE_COMPONENT_GRAPH_LANG, then LANG',
   cmdMcp: 'Start as an MCP server (stdio)',
+  helpHelp: 'Display this message',
+  helpVersion: 'Display version number',
+  helpTitle: (title) => title,
   optRoot: 'Project used when a tool omits root (default: working directory)',
 
   noVueFiles: (dir) => `No .vue files found in ${dir}`,
@@ -184,6 +201,13 @@ const en: Messages = {
   unsupportedPages: (dir) =>
     `No route definitions found. ${dir}/ looks like file-based routing (vue-router's Vite plugin, vite-plugin-pages, …), which isn't supported yet (the page components themselves are still analyzed)`,
   unreachable: 'not reachable from any route',
+  loadedDynamically: (modules) => `loaded dynamically by ${modules.join(', ')}, so its pages are decided at runtime`,
+  vitepressPages:
+    "This is a VitePress site. Pages are Markdown, so routes aren't listed (components used from Markdown are analyzed)",
+  staleAutoImport: (dts, spec) => `${dts}: ${spec} does not exist (components.d.ts may be stale)`,
+  summary: (components, edges, routes) => `${components} components, ${edges} edges, ${routes} routes`,
+  deletedMark: ' (deleted)',
+  unresolved: (names) => `Unresolved tags (registered by a plugin, or a missing import): ${names.join(', ')}`,
   parentRoutes: (names) => `parent: ${names.join(' > ')}`,
   namedViews: (names) => `named views: ${names.join(', ')}`,
   routeNotes: (notes) => ` (${notes.join(' / ')})`,

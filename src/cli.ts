@@ -69,8 +69,13 @@ cli
     }
 
     if (opts.json) {
-      process.stdout.write(JSON.stringify(impact ? { ...graph, impact } : graph, null, 2) + '\n')
-      return
+      const json = JSON.stringify(impact ? { ...graph, impact } : graph, null, 2) + '\n'
+      if (!opts.out) return void process.stdout.write(json)
+      // -o があれば JSON をそのファイルに書く
+      const out = resolve(opts.out)
+      mkdirSync(dirname(out), { recursive: true })
+      writeFileSync(out, json)
+      return void console.log(`→ ${out}`)
     }
 
     // HTML には全体を埋め込み、ビューア側で絞り込む（解除できるように）
@@ -93,7 +98,16 @@ cli
   })
 
 // --no-open に付く "(default: true)" は「開かない」が既定に読めるので消す
-cli.help((sections) => sections.map((sec) => ({ ...sec, body: sec.body.replace(/ \(default: true\)/g, '') })))
+cli.help((sections) =>
+  sections.map((sec) => ({
+    ...sec,
+    title: sec.title && t('helpTitle', sec.title),
+    body: sec.body
+      .replace(/ \(default: true\)/g, '')
+      .replace('Display this message', t('helpHelp'))
+      .replace('Display version number', t('helpVersion')),
+  })),
+)
 cli.version('0.1.0')
 
 try {

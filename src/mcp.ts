@@ -93,7 +93,7 @@ export function createServer(defaultRoot: string): McpServer {
           }
           label = files?.length ? t('diffFromPlusFiles', since) : t('diffFrom', since)
         }
-        const impact = analyzeImpact(graph, deps, changed, since ?? '')
+        const impact = analyzeImpact(graph, deps, changed, since ?? '', files?.map((f) => resolve(graph.root, f)))
         const lines = impactLines(graph, impact, label)
         const unknown = (files ?? []).filter((f) => !impact.changed.includes(relativeId(graph, f)))
         if (unknown.length) lines.push('', t('ignoredFiles', unknown))
