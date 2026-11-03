@@ -117,6 +117,7 @@ PriceTag (src/components/product/PriceTag.vue)
 | 遅延読み込み | `defineAsyncComponent(() => import('./Foo.vue'))` |
 | グローバル登録 | `app.component('Foo', Foo)` |
 | 自動 import | unplugin-vue-components / Nuxt の `components.d.ts` |
+| Nuxt の components/ | `.nuxt/` が無くても Nuxt の命名規則で解決（`user/Card.vue` → `<UserCard>`、`Lazy` 付き、`#components` からの import） |
 | バレル | `export { default as Foo } from './Foo.vue'` |
 | 再帰 | 自分自身をファイル名で描画するコンポーネント |
 

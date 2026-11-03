@@ -124,9 +124,21 @@ export function analyze(rootDir: string, options: BuildOptions = {}): { graph: G
 
   const barrel = createBarrelResolver(infos, resolveImport)
 
+  const srcDir = srcDirOf(root)
+  const auto = loadAutoImports(root)
+  // .nuxt/ は nuxt dev / nuxt prepare で生成されるので、clone 直後や CI には無い
+  if (isNuxt(root) && !existsSync(join(root, '.nuxt/components.d.ts'))) {
+    for (const [key, t] of nuxtComponents(join(srcDir, 'components'))) if (!auto.has(key)) auto.set(key, t)
+  }
+
   /** import のソースと名前から .vue ファイル（または外部パッケージ名）を求める */
   const targetOf = (source: string, imported: string, importer: string, async: boolean): Target | null => {
     if (source.includes('?')) return null // ?raw / ?url などはコンポーネントとしての依存ではない
+    if (source === '#components') {
+      // Nuxt の仮想モジュール。自動 import と同じ名前で引ける
+      const t = auto.get(toPascal(imported))
+      return t ? { ...t, async: async || t.async } : null
+    }
     const file = resolveImport(source, importer)
     if (!file) return /^[@\w]/.test(source) && !source.startsWith('@/') ? { external: source, async } : null
     if (file.endsWith('.vue')) return { file, async }
@@ -145,11 +157,8 @@ export function analyze(rootDir: string, options: BuildOptions = {}): { graph: G
     }
   }
 
-  const auto = loadAutoImports(root)
-
   const nodes = new Map<string, GraphNode>()
   const edges = new Map<string, GraphEdge>()
-  const srcDir = srcDirOf(root)
 
   const addEdge = (from: string, to: string, type: EdgeType, async: boolean) => {
     const key = `${from}\0${to}`
@@ -175,6 +184,11 @@ export function analyze(rootDir: string, options: BuildOptions = {}): { graph: G
       routes: [],
       shell: false,
     })
+  }
+  // 自動 import ではディレクトリ名が名前に付く（components/user/Card.vue → UserCard）
+  for (const [key, t] of auto) {
+    const n = t.file && !t.async ? nodes.get(rel(t.file)) : undefined
+    if (n && toPascal(n.name) === toPascal(basename(t.file!))) n.name = key
   }
 
   for (const info of infos.values()) {
@@ -398,8 +412,7 @@ function joinRoutePath(parent: string, child: string): string {
 
 /** Nuxt のファイルベースルーティング（pages/）と、全ページ共通の app.vue / layouts/default.vue */
 function nuxtRoutes(root: string, srcDir: string, rel: (f: string) => string) {
-  const isNuxt = ['ts', 'js', 'mjs', 'mts'].some((ext) => existsSync(join(root, `nuxt.config.${ext}`)))
-  if (!isNuxt) return null
+  if (!isNuxt(root)) return null
   const shell = ['app.vue', 'layouts/default.vue']
     .map((p) => join(srcDir, p))
     .filter((p) => existsSync(p))
@@ -438,6 +451,66 @@ function nuxtRoutes(root: string, srcDir: string, rel: (f: string) => string) {
     routes.push({ path: '/' + parts.join('/'), dynamic: false, view, layouts, chain: [...layouts, view], source: rel(pagesDir) })
   }
   return { routes, shell }
+}
+
+function isNuxt(root: string): boolean {
+  return ['ts', 'js', 'mjs', 'mts'].some((ext) => existsSync(join(root, `nuxt.config.${ext}`)))
+}
+
+const NUXT_BUILTINS = [
+  'NuxtLink', 'NuxtPage', 'NuxtLayout', 'NuxtErrorBoundary', 'NuxtLoadingIndicator', 'NuxtRouteAnnouncer',
+  'NuxtClientFallback', 'NuxtIsland', 'NuxtTime', 'NuxtWelcome', 'ClientOnly', 'DevOnly', 'ServerPlaceholder',
+]
+
+/**
+ * .nuxt/components.d.ts が無いときに、components/ から Nuxt と同じ規則で名前を組み立てる。
+ * components/user/Card.vue → UserCard、components/base/BaseButton.vue → BaseButton（重複は省く）
+ */
+function nuxtComponents(componentsDir: string): Map<string, Target> {
+  const map = new Map<string, Target>(NUXT_BUILTINS.map((name) => [name, { external: 'nuxt', async: false }]))
+  if (!existsSync(componentsDir)) return map
+  const visit = (dir: string) => {
+    for (const ent of readdirSync(dir, { withFileTypes: true })) {
+      const p = join(dir, ent.name)
+      if (ent.isDirectory()) visit(p)
+      else if (ent.name.endsWith('.vue')) {
+        let fileName = basename(ent.name, '.vue').replace(/(\.(server|client))?(\.global)?$/, '')
+        if (fileName.toLowerCase() === 'index') fileName = ''
+        const prefix = splitByCase(relative(componentsDir, dir))
+        const name = nuxtComponentName(splitByCase(fileName), prefix)
+        if (!name || map.has(name)) continue
+        map.set(name, { file: p, async: false })
+        map.set(`Lazy${name}`, { file: p, async: true })
+      }
+    }
+  }
+  visit(componentsDir)
+  return map
+}
+
+/** Nuxt の resolveComponentNameSegments と同じ。ファイル名がディレクトリ名で始まるなら、その分を省く */
+function nuxtComponentName(fileParts: string[], prefixParts: string[]): string {
+  const fileContent = fileParts.join('/').toLowerCase()
+  const nameParts = [...prefixParts]
+  const matched: string[] = []
+  for (let i = prefixParts.length - 1; i >= 0; i--) {
+    matched.unshift(prefixParts[i].toLowerCase())
+    const m = matched.join('/')
+    if (
+      fileContent === m ||
+      fileContent.startsWith(m + '/') ||
+      // Item/Item/Item.vue → Item
+      (prefixParts[i].toLowerCase() === fileContent && prefixParts[i] === prefixParts[i + 1])
+    ) {
+      nameParts.length = i
+    }
+  }
+  return [...nameParts, ...fileParts].map((s) => s[0].toUpperCase() + s.slice(1)).join('')
+}
+
+/** `base/myButton` → ['base', 'my', 'Button']、`HTMLParser` → ['HTML', 'Parser'] */
+function splitByCase(s: string): string[] {
+  return s.split(/[-_./\\]/).flatMap((p) => p.match(/[A-Z]+(?![a-z])|[A-Z]?[a-z0-9]+|[A-Z]/g) ?? [])
 }
 
 function bindingTarget(

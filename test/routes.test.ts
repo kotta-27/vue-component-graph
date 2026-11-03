@@ -61,3 +61,40 @@ describe('Nuxt pages', () => {
     expect(paths).toEqual(['/', '/users/:id'])
   })
 })
+
+describe('Nuxt without .nuxt/ (fresh clone, CI)', () => {
+  const graph = buildGraph(fixture('nuxt-bare'))
+  const node = (id: string) => graph.nodes.find((n) => n.id === `app/${id}`)!
+  const childrenOf = (id: string) =>
+    graph.edges.filter((e) => e.from === `app/${id}`).map((e) => e.to.replace(/^app\//, '')).sort()
+
+  it('resolves components/ with Nuxt naming rules', () => {
+    expect(childrenOf('pages/index.vue')).toEqual([
+      'components/Chart.client.vue',
+      'components/modal/index.vue',
+      'components/user/Card.vue',
+    ])
+    expect(childrenOf('components/user/Card.vue')).toEqual(['components/base/BaseButton.vue'])
+    expect(childrenOf('components/modal/index.vue')).toEqual(['components/form/input/Text.vue'])
+    expect(graph.edges.find((e) => e.to === 'app/components/user/Card.vue')!.async).toBe(true)
+    expect(graph.orphans).toEqual(['app/components/Unused.vue'])
+  })
+
+  it("resolves imports from '#components'", () => {
+    const e = graph.edges.find((e) => e.from === 'app/components/nav/NavBottom.vue')!
+    expect(e).toMatchObject({ to: 'app/components/nav/button/Home.vue', type: 'script' })
+  })
+
+  it('names nodes as Nuxt registers them', () => {
+    expect(node('components/user/Card.vue').name).toBe('UserCard')
+    expect(node('components/base/BaseButton.vue').name).toBe('BaseButton')
+    expect(node('components/form/input/Text.vue').name).toBe('FormInputText')
+    expect(node('components/modal/index.vue').name).toBe('Modal')
+    expect(node('components/Chart.client.vue').name).toBe('Chart')
+  })
+
+  it('treats Nuxt built-ins as external', () => {
+    expect(node('pages/index.vue').externals).toEqual(['NuxtLink (nuxt)'])
+    expect(node('app.vue').externals).toEqual(['NuxtLayout (nuxt)', 'NuxtPage (nuxt)'])
+  })
+})
