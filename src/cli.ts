@@ -5,22 +5,28 @@ import { dirname, resolve } from 'node:path'
 import { cac } from 'cac'
 import { analyze, findNodes, subgraph, type Direction, type Graph } from './graph'
 import { impactLines } from './format'
+import { detectLang, setLang, t } from './i18n'
 import { renderHtml } from './html'
 import { analyzeImpact, gitChangedFiles, type Impact } from './impact'
 import { startMcpServer } from './mcp'
 import { defaultOutPath } from './output'
 
+// ヘルプの文言も切り替えるので、コマンドを定義する前に決める
+setLang(detectLang())
+
 const cli = cac('vue-component-graph')
 
+cli.option('--lang <lang>', t('optLang'))
+
 cli
-  .command('[dir]', 'Vue コンポーネントの依存グラフを HTML で出力する')
-  .option('-o, --out <file>', '出力する HTML のパス（既定: node_modules/.cache/vue-component-graph/graph.html）')
-  .option('--focus <name>', '指定コンポーネントの配下だけを表示')
-  .option('--who-uses <name>', '指定コンポーネントを使っている側だけを表示')
-  .option('--since <ref>', '指定した git ref からの変更が影響するコンポーネントとページを表示')
-  .option('--externals', 'ライブラリ等の外部コンポーネントもノードとして表示')
-  .option('--json', 'HTML の代わりに JSON を標準出力へ')
-  .option('--no-open', '生成後にブラウザで開かない')
+  .command('[dir]', t('cmdGraph'))
+  .option('-o, --out <file>', t('optOut'))
+  .option('--focus <name>', t('optFocus'))
+  .option('--who-uses <name>', t('optWhoUses'))
+  .option('--since <ref>', t('optSince'))
+  .option('--externals', t('optExternals'))
+  .option('--json', t('optJson'))
+  .option('--no-open', t('optNoOpen'))
   .example('vue-component-graph')
   .example('vue-component-graph ./my-app --focus AppHeader')
   .example('vue-component-graph --who-uses BaseButton')
@@ -30,11 +36,11 @@ cli
     const root = resolve(dir ?? '.')
     const { graph: full, deps } = analyze(root, { externals: opts.externals })
     const components = full.nodes.filter((n) => n.kind === 'component')
-    if (!components.length) fail(`${root} に .vue ファイルが見つかりませんでした`)
+    if (!components.length) fail(t('noVueFiles', root))
 
     let graph = full
     let initialFocus: { id: string; dir: Direction } | undefined
-    if (opts.focus && opts.whoUses) fail('--focus と --who-uses は同時に指定できません')
+    if (opts.focus && opts.whoUses) fail(t('focusAndWhoUses'))
     const query: string | undefined = opts.focus ?? opts.whoUses
     if (query) {
       const id = pick(full, query)
@@ -49,7 +55,7 @@ cli
         changed = gitChangedFiles(root, String(opts.since))
       } catch (e) {
         const detail = String((e as { stderr?: string }).stderr || (e as Error).message).trim().split('\n')[0]
-        fail(`git の差分を取得できませんでした（${detail}）`)
+        fail(t('gitDiffFailed', detail))
       }
       impact = analyzeImpact(full, deps, changed, String(opts.since))
     }
@@ -70,9 +76,9 @@ cli
   })
 
 cli
-  .command('mcp', 'MCP サーバーとして起動する（stdio）')
-  .option('--root <dir>', 'ツールで root を省略したときのプロジェクト（既定: 起動ディレクトリ）')
-  .example('claude mcp add vue-component-graph -- npx github:kotta-27/vue-component-graph mcp')
+  .command('mcp', t('cmdMcp'))
+  .option('--root <dir>', t('optRoot'))
+  .example('claude mcp add vue-component-graph -- npx -y vue-component-graph mcp')
   .action(async (opts) => {
     await startMcpServer(resolve(opts.root ?? '.'))
   })
@@ -88,9 +94,9 @@ try {
 
 function pick(graph: Graph, query: string): string {
   const hits = findNodes(graph, query)
-  if (!hits.length) fail(`"${query}" に一致するコンポーネントがありません`)
+  if (!hits.length) fail(t('noMatch', query))
   if (hits.length > 1) {
-    fail(`"${query}" が複数に一致しました。パスで指定してください:\n${hits.map((n) => `  ${n.id}`).join('\n')}`)
+    fail(`${t('multipleMatches', query)}\n${hits.map((n) => `  ${n.id}`).join('\n')}`)
   }
   return hits[0].id
 }
@@ -101,22 +107,22 @@ function printSummary(graph: Graph) {
   const log = (s = '') => console.error(s)
   log(`${comps} components, ${edges} edges, ${graph.routes.length} routes`)
   if (graph.orphans.length) {
-    log(`\n未使用 (${graph.orphans.length})`)
+    log(`\n${t('unused')} (${graph.orphans.length})`)
     for (const id of graph.orphans) log(`  ${id}`)
   }
   if (graph.cycles.length) {
-    log(`\n循環 (${graph.cycles.length})`)
+    log(`\n${t('cycles')} (${graph.cycles.length})`)
     for (const c of graph.cycles) log(`  ${[...c, c[0]].join(' → ')}`)
   }
   if (graph.warnings.length) {
-    log(`\n解析の警告 (${graph.warnings.length})`)
+    log(`\n${t('warnings')} (${graph.warnings.length})`)
     for (const w of graph.warnings.slice(0, 10)) log(`  ${w}`)
-    if (graph.warnings.length > 10) log(`  ...ほか ${graph.warnings.length - 10} 件`)
+    if (graph.warnings.length > 10) log(`  ${t('moreWarnings', graph.warnings.length - 10)}`)
   }
 }
 
 function printImpact(graph: Graph, impact: Impact) {
-  console.error('\n' + impactLines(graph, impact, `${impact.since} との差分`).join('\n'))
+  console.error('\n' + impactLines(graph, impact, t('diffFrom', impact.since)).join('\n'))
 }
 
 function openInBrowser(file: string) {

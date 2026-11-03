@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
 import { beforeAll, describe, expect, it } from 'vitest'
+import { setLang } from '../src/i18n'
 import { createServer } from '../src/mcp'
 
 // MCP のツールは package.json のあるディレクトリを要求するので、フィクスチャを複製して用意する
@@ -22,6 +23,7 @@ beforeAll(async () => {
   git('add', '-A')
   git('commit', '-qm', 'init')
 
+  setLang('ja')
   const [clientSide, serverSide] = InMemoryTransport.createLinkedPair()
   await createServer(root).connect(serverSide)
   client = new Client({ name: 'test', version: '0' })
@@ -92,5 +94,19 @@ describe('MCP server', () => {
     expect(missing.text).toContain('候補: CycleA, CycleB')
     expect((await call('impact')).isError).toBe(true)
     expect((await call('routes', { root: '/nonexistent' })).isError).toBe(true)
+  })
+
+  it('answers in English when the language is en', async () => {
+    setLang('en')
+    try {
+      const { text } = await call('who_uses', { component: 'SideNav' })
+      expect(text).toMatch(/^Direct parents \(\d+\):/m)
+      expect(text).toMatch(/^Loaded by modules \(\d+\): .*router\.ts/m)
+      expect(text).toMatch(/^Pages \(\d+\):/m)
+      const missing = await call('component_info', { component: 'CycleZ' })
+      expect(missing.text).toBe('No component matches "CycleZ". Did you mean: CycleA, CycleB')
+    } finally {
+      setLang('ja')
+    }
   })
 })

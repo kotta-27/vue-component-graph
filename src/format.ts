@@ -1,4 +1,5 @@
 import type { Graph, GraphNode, RouteInfo } from './graph'
+import { t } from './i18n'
 import type { Impact } from './impact'
 
 const nodeIndex = new WeakMap<Graph, Map<string, GraphNode>>()
@@ -13,7 +14,7 @@ export function nameOf(graph: Graph, id: string): string {
 }
 
 export function routeLabel(r: RouteInfo): string {
-  return r.dynamic ? `[動的] ${r.path}` : r.path
+  return r.dynamic ? t('dynamicRoute', r.path) : r.path
 }
 
 /** 全角文字を 2 桁として数えた表示幅 */
@@ -34,13 +35,13 @@ export function routeLines(graph: Graph, indices: number[]): string[] {
 }
 
 export function impactLines(graph: Graph, impact: Impact, label: string): string[] {
-  const out = [`変更の影響（${label}）`]
-  if (!impact.changed.length) return [...out, '  解析対象に関係する変更はありません']
-  out.push(`  変更ファイル (${impact.changed.length})`)
+  const out = [t('impactTitle', label)]
+  if (!impact.changed.length) return [...out, `  ${t('impactNone')}`]
+  out.push(`  ${t('changedFiles', impact.changed.length)}`)
   for (const id of impact.changed) out.push(`    ${id}`)
-  out.push(`  影響するコンポーネント (${impact.affected.length})`)
+  out.push(`  ${t('affectedComponents', impact.affected.length)}`)
   if (impact.affected.length) out.push(`    ${impact.affected.map((id) => nameOf(graph, id)).join(', ')}`)
-  out.push(`  確認するページ (${impact.routes.length})${impact.everywhere ? ' ← 全ページに影響' : ''}`)
+  out.push(`  ${t('pagesToCheck', impact.routes.length)}${impact.everywhere ? t('everywhere') : ''}`)
   for (const line of routeLines(graph, impact.routes)) out.push(`    ${line}`)
   return out
 }

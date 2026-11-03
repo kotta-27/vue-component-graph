@@ -110,3 +110,16 @@ describe('helpers', () => {
     expect(JSON.parse(stripJsonc('{ "a": "http://x/*", // c\n "b": [1,], }'))).toEqual({ a: 'http://x/*', b: [1] })
   })
 })
+
+describe('module names', () => {
+  it('adds parent directories until the name is unambiguous', () => {
+    const g = buildGraph(fileURLToPath(new URL('./fixtures/modules', import.meta.url)))
+    const names = Object.fromEntries(g.nodes.filter((n) => n.kind === 'module').map((n) => [n.id, n.name]))
+    expect(names).toEqual({
+      'src/router/index.ts': 'router/index.ts',
+      'src/a/setup.ts': 'a/setup.ts',
+      'src/b/setup.ts': 'b/setup.ts',
+      'src/lib/main.ts': 'main.ts',
+    })
+  })
+})

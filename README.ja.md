@@ -186,8 +186,11 @@ vue-component-graph [dir] [options]
 | `--externals` | ライブラリ等の外部コンポーネントもノードとして表示 |
 | `--json` | HTML の代わりに JSON を標準出力へ |
 | `--no-open` | 生成後にブラウザで開かない |
+| `--lang <ja\|en>` | 出力の言語（既定: `VUE_COMPONENT_GRAPH_LANG`、なければ `LANG`） |
 
-`vue-component-graph mcp [--root <dir>]` で MCP サーバー（stdio）として起動する。
+`vue-component-graph mcp [--root <dir>] [--lang <ja|en>]` で MCP サーバー（stdio）として起動する。
+
+ターミナルと MCP の出力は日本語と英語に対応している。`--lang`、環境変数 `VUE_COMPONENT_GRAPH_LANG`、ロケール（`LANG` など）の順に決まる。OS の言語が英語の環境で日本語にしたいときは `--lang ja` を付けるか、`VUE_COMPONENT_GRAPH_LANG=ja` を設定する。
 
 `<name>` はコンポーネント名（`AppHeader`、`app-header`）かパスの末尾（`nav/NavLink`）。複数に一致した場合は候補を表示して終了する。
 

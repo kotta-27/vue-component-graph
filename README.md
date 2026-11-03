@@ -15,8 +15,7 @@ Questions it answers:
 - Which pages should I check for the changes in this PR? (`--since`)
 - Are there unused components or circular references?
 
-> [!NOTE]
-> The viewer UI switches between English and Japanese (it follows your browser's language by default). Terminal output and MCP responses are currently in Japanese.
+Available in English and Japanese. The CLI and MCP server use `--lang`, then `VUE_COMPONENT_GRAPH_LANG`, then your locale (`LANG`, …). The viewer follows your browser's language and has a switch button. The example outputs below are in Japanese.
 
 ## Quick start
 
@@ -189,8 +188,9 @@ vue-component-graph [dir] [options]
 | `--externals` | Also show external components (from libraries) as nodes |
 | `--json` | Print JSON to stdout instead of writing HTML |
 | `--no-open` | Don't open the browser after generating |
+| `--lang <ja\|en>` | Output language (default: `VUE_COMPONENT_GRAPH_LANG`, then `LANG`) |
 
-`vue-component-graph mcp [--root <dir>]` starts the MCP server (stdio).
+`vue-component-graph mcp [--root <dir>] [--lang <ja|en>]` starts the MCP server (stdio).
 
 `<name>` is a component name (`AppHeader`, `app-header`) or the end of a path (`nav/NavLink`). If several components match, the candidates are printed and the command exits.
 
