@@ -97,6 +97,15 @@ const ja = {
   summary: (components: number, edges: number, routes: number) =>
     `コンポーネント ${components}、依存 ${edges}、ルート ${routes}`,
   deletedMark: '（削除）',
+  remoteLayer: (layer: string) => `Nuxt のレイヤー ${layer} はリポジトリの外にあるので解析しません（その部品やページは解決できません）`,
+  unresolvedImports: (n: number) => `解決できない import (${n})`,
+  unresolvedImportsHint:
+    'ビルド時に生成されるファイルか、読めていない alias（webpack の alias など）の可能性があります。未使用の判定に影響します',
+  monorepoRoot: (packages: string[]) =>
+    `モノレポのルートのようです。パッケージ間の import は解決できないので、パッケージごとに実行してください: ${packages.join(', ')}`,
+  definedIn: (file: string) => `定義: ${file}`,
+  unlinked: (files: string[]) => `どのコンポーネントにもつながらなかった変更 (${files.length}): ${files.join(', ')}`,
+  refNotFound: (ref: string, hint: string) => `git の ref "${ref}" が見つかりません${hint ? `。候補: ${hint}` : ''}`,
   unresolved: (names: string[]) => `解決できないタグ（プラグインで登録されたものか、import 漏れ）: ${names.join(', ')}`,
   parentRoutes: (names: string[]) => `親: ${names.join(' > ')}`,
   namedViews: (names: string[]) => `名前付きビュー: ${names.join(', ')}`,
@@ -207,6 +216,15 @@ const en: Messages = {
   staleAutoImport: (dts, spec) => `${dts}: ${spec} does not exist (components.d.ts may be stale)`,
   summary: (components, edges, routes) => `${components} components, ${edges} edges, ${routes} routes`,
   deletedMark: ' (deleted)',
+  remoteLayer: (layer) => `Nuxt layer ${layer} is outside the repository and isn't analyzed (its components and pages can't be resolved)`,
+  unresolvedImports: (n) => `Unresolved imports (${n})`,
+  unresolvedImportsHint:
+    "They may be generated at build time, or use aliases that weren't read (such as webpack's). This affects the unused check",
+  monorepoRoot: (packages) =>
+    `This looks like a monorepo root. Imports between packages can't be resolved, so run it in each package: ${packages.join(', ')}`,
+  definedIn: (file) => `defined in ${file}`,
+  unlinked: (files) => `Changes not linked to any component (${files.length}): ${files.join(', ')}`,
+  refNotFound: (ref, hint) => `git ref "${ref}" not found${hint ? `. Try: ${hint}` : ''}`,
   unresolved: (names) => `Unresolved tags (registered by a plugin, or a missing import): ${names.join(', ')}`,
   parentRoutes: (names) => `parent: ${names.join(' > ')}`,
   namedViews: (names) => `named views: ${names.join(', ')}`,

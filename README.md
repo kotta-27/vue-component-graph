@@ -76,10 +76,12 @@ Change impact (diff from main)
   <img alt="Components and pages affected by a change to usePrice.ts, highlighted" src="https://raw.githubusercontent.com/kotta-27/vue-component-graph/main/docs/impact-light.png">
 </picture>
 
-- Changes outside `.vue` files are followed too: composables, utilities, files loaded with `?raw`, CSS pulled in with `@import`, and images referenced from templates (`<img src="@/assets/logo.svg">`)
+- Changes outside `.vue` files are followed too: composables, utilities, files loaded with `?raw`, CSS pulled in with `@import` / Sass `@use` (including partials such as `_tooltip.scss`), and images referenced from templates (`<img src="@/assets/logo.svg">`)
 - A change to a component under `createApp(App)` (such as the header), or to anything the entry loads (global CSS, plugins), is reported as affecting every page
 - A component change is not spread through the router or a store: route tables, `createRouter`, `createApp` and global registration only collect components, and pages are worked out from the routes instead
-- Deleted files are listed with "(deleted)"
+- Deleted files are listed with "(deleted)", and files that still import them are reported as affected
+- Changed files that don't reach any component or page are listed separately instead of being silently dropped, so "0 pages to check" never hides something the analysis couldn't follow
+- With `--since`, only the impact is printed (no unused list)
 
 ## Using it from AI agents (MCP)
 
@@ -142,19 +144,20 @@ Pages (4):
 
 | Pattern | Example |
 |---|---|
-| Relative and aliased imports | `import Foo from './Foo.vue'`, tsconfig `paths`, `@/` `~/` |
+| Relative and aliased imports | `import Foo from './Foo.vue'`, tsconfig `paths`, `@/` `~/`, and webpack-style paths that start with a project directory (`src/components/Foo`) |
 | Template tags | `<FooBar>`, `<foo-bar>`, `<component :is="cond ? A : B">` |
 | Options API | `components: { Foo }` |
-| Lazy loading | `defineAsyncComponent(() => import('./Foo.vue'))`, `const Foo = () => import('./Foo.vue')` |
+| Lazy loading | `defineAsyncComponent(() => import('./Foo.vue'))`, `const Foo = () => import('./Foo.vue')`, webpack's `require()` / `require.ensure` |
 | Global registration | `app.component('Foo', Foo)`. Resolved before a component's own file name, as Vue does |
 | Auto-imports | `components.d.ts` from unplugin-vue-components / Nuxt |
-| Nuxt `components/` | Resolved with Nuxt's naming rules even without `.nuxt/` (`user/Card.vue` → `<UserCard>`, `Lazy` prefix, imports from `#components`) |
+| Nuxt `components/` | Resolved with Nuxt's naming rules even without `.nuxt/` (`user/Card.vue` → `<UserCard>`, `global/Badge.vue` → `<Badge>`, `Lazy` prefix, imports from `#components`), including layers in the repository (`extends: ['./layers/x']`, `layers/*`) |
+| Nuxt Content | Components used from `content/**/*.md` with MDC syntax (`::read-more`, `:kbd[Ctrl]`); `components/content/` is named without the directory |
 | Barrels | `export { default as Foo } from './Foo.vue'`, `export const Foo = withInstall(foo)`, `export const Layout = () => import('./Layout.vue')`. `Foo/index.ts` wins over `Foo/index.vue`, as in Vite |
-| `import.meta.glob` | Files matched by `import.meta.glob('/src/views/**/*.vue')` count as used; their pages are decided at runtime |
+| `import.meta.glob` | Files matched by `import.meta.glob('/src/views/**/*.vue')` or webpack's `require.context()` count as used; their pages are decided at runtime |
 | VitePress | Components imported or used in Markdown pages, and the theme in `.vitepress/theme` |
 | Recursion | A component that renders itself by its file name |
 
-Components written in JSX / TSX are not analyzed, but are shown with their file (`Badge (src/components/Badge/badge.tsx)`). Tags that can't be resolved at all — registered by a plugin, or a missing import — are listed separately from library components.
+Tags with a UI library's prefix (`QBtn` for Quasar, `UButton` for Nuxt UI, `VBtn` for Vuetify, `ElButton`, `NButton`, …) are attributed to that library when it is a dependency. Components written in JSX / TSX are not analyzed, but are shown with their file (`Badge (src/components/Badge/badge.tsx)`). Tags that can't be resolved at all — registered by a plugin, or a missing import — are listed separately from library components.
 
 Dependencies that are imported but not rendered in the template (route definitions, `h()`, via variables, and so on) are shown separately as "import only". Named imports from a `.vue` file (such as exported types) are not component dependencies, though `--since` still follows them. Modules such as `main.ts` and `router.ts` that import `.vue` files also appear as nodes.
 
@@ -162,9 +165,10 @@ Components are named the way Vue resolves them: `SvgIcon/index.vue` is `SvgIcon`
 
 ### Pages (routes)
 
-- **vue-router**: nested `children`, named views (`components: { default, side }`), dynamic routes built with `.map()` and the like, and route components imported from other modules. Routes that only render a shared layout — a parent with `redirect`, a parent whose component wraps several route trees (the admin-template `Layout`), or a menu entry that points at the layout — are not counted as pages
-- **Nuxt**: file-based routing in `pages/` (`[id]`, `[[id]]`, `[...slug]`, `(group)`). `settings.vue` with `settings/index.vue` is one page, `/settings`
-- **Shared by all pages**: everything under `createApp(App)`, and Nuxt's `app.vue` / `layouts/default.vue`
+- **vue-router**: nested `children`, named views (`components: { default, side }`), dynamic routes built with `.map()` and the like, and route components imported from other modules. A child with an empty path stands for its parent's URL. Routes that only render a shared layout — a parent with `redirect`, a parent whose component wraps several route trees in the default view (the admin-template `Layout`), or a menu entry that points at the layout — and external links (`path: 'https://...'`) are not counted as pages. A parent whose children only fill named views (a list page with a dialog route) is a page
+- **Nuxt**: file-based routing in `pages/` (`[id]`, `[[id]]`, `[...slug]`, `(group)`), including layers. `settings.vue` with `settings/index.vue` is one page, `/settings`. Each page gets the layout it selects with `definePageMeta({ layout })` (`default` otherwise, none for `layout: false`)
+- When the same path is defined more than once (modules that each define `/`), the defining file is shown
+- **Shared by all pages**: everything under `createApp(App)` and Nuxt's `app.vue`
 
 ### Structural issues
 
@@ -246,7 +250,12 @@ Results go to stdout and errors to stderr, so `npx vue-component-graph --since m
   warnings: string[]
   unsupportedPagesDir?: string  // file-based routing directory that can't be read yet
   vitepress?: boolean           // VitePress site: pages are Markdown, routes aren't listed
-  impact?: { since: string; changed: string[]; deleted: string[]; affected: string[]; routes: number[]; everywhere: boolean }
+  unresolvedImports: { from: string; spec: string }[]  // project imports that couldn't be resolved
+  workspacePackages?: string[]  // when run at a monorepo root: packages that contain .vue files
+  impact?: {
+    since: string; changed: string[]; deleted: string[]; unlinked: string[]
+    affected: string[]; routes: number[]; everywhere: boolean
+  }
 }
 ```
 
@@ -259,7 +268,10 @@ This is static analysis, so anything decided only at runtime is unknown.
 - **File-based routing in Vite**: no routes are built from `src/pages/` for vue-router's Vite plugin (formerly unplugin-vue-router) or vite-plugin-pages. The output says so, and the page and layout components themselves are still analyzed and are not reported as unused
 - **Routes from the server**: screens loaded through `import.meta.glob` for routes built at runtime are counted as used, but which pages they appear on is unknown
 - **VitePress**: routes aren't listed. Components used from Markdown are analyzed
-- **Monorepos**: run it in each package. Imports from other packages are not seen, so a component used only by another package is reported as unused
+- **Monorepos**: run it in each package. Imports from other packages are not seen, so a component used only by another package is reported as unused. Run at a monorepo root, it says so and lists the packages
+- **Aliases from bundler configs**: `vite.config` / webpack aliases aren't read (tsconfig `paths` are). Imports that can't be resolved are listed, since they can make used components look unused
+- **Skipped directories**: `node_modules`, `.nuxt`, `__tests__` and the like anywhere, and `dist`, `build`, `test`, `tests`, `e2e`, `coverage`, … only at the project root
+- **Nuxt layers outside the repository** (npm packages, `github:`) aren't analyzed; a warning says which
 - **Vue 2**: analyzed with Vue 3's SFC compiler. Results are usable, but syntax Vue 3 dropped (such as `<template functional>`) shows up as analysis warnings
 - **`components.d.ts` not committed**: auto-imports from unplugin-vue-components are read from the `components.d.ts` the dev server generates; if it isn't in the repository they can't be resolved. Entries pointing at files that no longer exist are reported as warnings. Nuxt is inferred from `components/` even without `.nuxt/`, but directories added in `nuxt.config` and layers are resolved only after `nuxi prepare`
 - **Plugin registration**: components registered globally by plugins (`RouterView`, …) are treated as external components

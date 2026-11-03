@@ -51,12 +51,12 @@ describe('Nuxt pages', () => {
   it('derives routes from pages/', () => {
     expect(graph.routes.map((r) => r.path).sort()).toEqual(['/', '/:slug(.*)*', '/about', '/users', '/users/:id'])
     const user = graph.routes.find((r) => r.path === '/users/:id')!
-    expect(user.chain).toEqual(['app/pages/users.vue', 'app/pages/users/[id].vue'])
+    expect(user.chain).toEqual(['app/layouts/default.vue', 'app/pages/users.vue', 'app/pages/users/[id].vue'])
   })
 
-  it('app.vue and the default layout are on every page', () => {
+  it('app.vue is on every page, and the default layout on every page that uses it', () => {
     expect(node('app.vue').shell).toBe(true)
-    expect(node('components/SiteHeader.vue').shell).toBe(true)
+    expect(node('components/SiteHeader.vue').routes).toHaveLength(graph.routes.length)
     expect(node('components/UserCard.vue').shell).toBe(false)
     const paths = node('components/UserCard.vue').routes.map((i) => graph.routes[i].path).sort()
     expect(paths).toEqual(['/', '/users/:id'])

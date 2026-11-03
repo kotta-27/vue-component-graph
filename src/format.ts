@@ -24,13 +24,20 @@ export function displayWidth(s: string): number {
   return w
 }
 
-/** ルートを「パス  画面」の 2 列にそろえる */
+/**
+ * ルートを「パス  画面」の 2 列にそろえる（長いパスに合わせて全行を空けないよう、幅には上限を設ける）。
+ * 同じパスが複数あるときは定義元を添える（モジュールごとに / を定義している構成など）
+ */
 export function routeLines(graph: Graph, indices: number[]): string[] {
   const routes = indices.map((i) => graph.routes[i])
-  const width = Math.max(0, ...routes.map((r) => displayWidth(routeLabel(r))))
+  const width = Math.min(32, Math.max(0, ...routes.map((r) => displayWidth(routeLabel(r)))))
+  const count = new Map<string, number>()
+  for (const r of graph.routes) count.set(r.path, (count.get(r.path) ?? 0) + 1)
   return routes.map((r) => {
     const label = routeLabel(r)
-    return `${label}${' '.repeat(width - displayWidth(label))}  ${nameOf(graph, r.view)}`
+    const pad = ' '.repeat(Math.max(0, width - displayWidth(label)))
+    const where = count.get(r.path)! > 1 ? `  (${t('definedIn', r.source)})` : ''
+    return `${label}${pad}  ${nameOf(graph, r.view)}${where}`
   })
 }
 
@@ -47,5 +54,6 @@ export function impactLines(graph: Graph, impact: Impact, label: string): string
   if (affected.length) out.push(`    ${affected.map((id) => nameOf(graph, id)).join(', ')}`)
   out.push(`  ${t('pagesToCheck', impact.routes.length)}${impact.everywhere ? t('everywhere') : ''}`)
   for (const line of routeLines(graph, impact.routes)) out.push(`    ${line}`)
+  if (impact.unlinked.length) out.push(`  ${t('unlinked', impact.unlinked)}`)
   return out
 }

@@ -1,1 +1,1 @@
-<template><img src="@/assets/logo.svg" /><RouterView /></template>
+<template><img src="@/assets/logo.svg" /><MissingWidget /><RouterView /></template>

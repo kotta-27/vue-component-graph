@@ -52,6 +52,10 @@
       unresolvedN: (n) => `解決できないタグ（${n}）`,
       vitepressPages: 'VitePress のサイトです。ページは Markdown なのでルートは列挙しません（Markdown から使われるコンポーネントは解析しています）',
       warnings: (n) => `解析の警告（${n}）`,
+      unresolvedImports: (n) => `解決できない import（${n}）`,
+      unresolvedImportsHint: 'ビルド時に生成されるファイルか、読めていない alias（webpack の alias など）の可能性があります。未使用の判定に影響します',
+      monorepoRoot: (pkgs) => `モノレポのルートのようです。パッケージ間の import は解決できないので、パッケージごとに実行してください: ${pkgs}`,
+      definedIn: (file) => `定義: ${file}`,
       none: 'なし',
       listScope: (v, total) => `表示中の ${v} 件（全体 ${total} 件）`,
       colName: '名前',
@@ -137,6 +141,10 @@
       unresolvedN: (n) => `Unresolved tags (${n})`,
       vitepressPages: "This is a VitePress site. Pages are Markdown, so routes aren't listed (components used from Markdown are analyzed)",
       warnings: (n) => `Analysis warnings (${n})`,
+      unresolvedImports: (n) => `Unresolved imports (${n})`,
+      unresolvedImportsHint: "They may be generated at build time, or use aliases that weren't read (such as webpack's). This affects the unused check",
+      monorepoRoot: (pkgs) => `This looks like a monorepo root. Imports between packages can't be resolved, so run it in each package: ${pkgs}`,
+      definedIn: (file) => `defined in ${file}`,
       none: 'None',
       listScope: (v, total) => `Showing ${v} of ${total}`,
       colName: 'Name',
@@ -792,7 +800,8 @@
       const of = v !== total ? `<span class="of">${t('ofTotal', total)}</span>` : ''
       return `<div class="kpi"><div class="v">${v}${of}</div><div class="k">${k}</div></div>`
     }
-    let h = impactHtml()
+    let h = DATA.workspacePackages ? `<p class="note">${esc(t('monorepoRoot', DATA.workspacePackages.join(', ')))}</p>` : ''
+    h += impactHtml()
     if (state.focus) {
       const n = nodeById.get(state.focus.id)
       h += `<p class="scope">${t('scopeFocus', esc(n.label), state.focus.dir)}</p>`
@@ -838,6 +847,12 @@
     if (libraries.size) h += `<h3>${t('externalsByFiles')}</h3>` + countList(libraries)
     if (unresolved.size) h += `<h3 title="${t('unresolvedNote')}">${t('unresolvedByFiles')}</h3>` + countList(unresolved)
 
+    const unresolvedImports = DATA.unresolvedImports || []
+    if (unresolvedImports.length) {
+      h += `<h3 title="${t('unresolvedImportsHint')}">${t('unresolvedImports', unresolvedImports.length)}</h3><ul class="warnings">`
+      h += unresolvedImports.slice(0, 50).map((u) => `<li>${esc(u.from)}: ${esc(u.spec)}</li>`).join('')
+      h += '</ul>'
+    }
     if (DATA.warnings.length) {
       h += `<h3>${t('warnings', DATA.warnings.length)}</h3><ul class="warnings">`
       h += DATA.warnings.map((w) => `<li>${esc(w)}</li>`).join('')
@@ -912,8 +927,12 @@
     side.scrollTop = 0
   }
 
+  // 同じパスが複数あるとき（モジュールごとに / を定義する構成など）は、定義元を添えて区別する
+  const pathCount = new Map()
+  for (const r of DATA.routes) pathCount.set(r.path, (pathCount.get(r.path) || 0) + 1)
   function routeLabel(r) {
-    return r.dynamic ? `<span class="tag" style="margin:0">${t('dynamic')}</span> <code>${esc(r.path)}</code>` : esc(r.path)
+    const label = r.dynamic ? `<span class="tag" style="margin:0">${t('dynamic')}</span> <code>${esc(r.path)}</code>` : esc(r.path)
+    return pathCount.get(r.path) > 1 ? `${label} <span class="path" title="${esc(r.source)}">${esc(t('definedIn', r.source))}</span>` : label
   }
 
   function routeItem(i) {

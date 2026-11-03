@@ -64,6 +64,10 @@ export interface Graph {
   unsupportedPagesDir?: string
   /** VitePress のサイト。ページは Markdown で、ルートは列挙しない */
   vitepress?: boolean
+  /** 解決できなかった、プロジェクト内を指すはずの import（alias を読めていないなど） */
+  unresolvedImports: { from: string; spec: string }[]
+  /** モノレポのルートで実行したときの、.vue を含むパッケージ */
+  workspacePackages?: string[]
 }
 
 /**
@@ -80,21 +84,25 @@ export interface FileDeps {
   hubs: Set<string>
   /** hubs のうちバレル以外。何が変わっても、ここから先（ストアなどを経由した利用者）には伝えない */
   sinks: Set<string>
+  /** 解決できなかった相対・エイリアスの import が指していたはずのパス（拡張子なし）→ import していたファイル。削除の影響に使う */
+  missing: Map<string, Set<string>>
 }
 
 export interface BuildOptions {
   externals?: boolean
 }
 
-const IGNORE_DIRS = new Set([
-  'node_modules', 'dist', 'build', 'out', 'coverage', '.git', '.nuxt', '.output',
-  '.vite', '.vercel', '.wrangler', '.turbo', 'test', 'tests', '__tests__', 'e2e', 'cypress', 'playwright',
-])
+/** どこにあっても読まないディレクトリ */
+const IGNORE_DIRS = new Set(['node_modules', '.git', '.nuxt', '.output', '.vite', '.vercel', '.wrangler', '.turbo', '__tests__'])
+/** プロジェクト直下にあるときだけ読まないディレクトリ（src/views/test/ などはアプリの一部なので読む） */
+const ROOT_IGNORE_DIRS = new Set(['dist', 'build', 'out', 'coverage', 'test', 'tests', 'e2e', 'cypress', 'playwright'])
 const SOURCE_RE = /\.(vue|[cm]?[jt]sx?)$/
 const SKIP_FILE_RE = /\.d\.ts$|\.(test|spec|stories|story)\.[^.]+$|(^|[\\/])[\w.-]+\.config\.[^.]+$/
 
-export function scanFiles(root: string, { markdown = false } = {}): string[] {
+/** markdownDirs の下の .md も読む（VitePress のサイト全体、Nuxt Content の content/） */
+export function scanFiles(root: string, { markdownDirs = [] as string[] } = {}): string[] {
   const out: string[] = []
+  const inMarkdownDir = (p: string) => markdownDirs.some((d) => p === d || p.startsWith(d + sep))
   const visit = (dir: string) => {
     for (const ent of readdirSync(dir, { withFileTypes: true })) {
       const p = join(dir, ent.name)
@@ -102,10 +110,11 @@ export function scanFiles(root: string, { markdown = false } = {}): string[] {
         // VitePress のテーマ（.vitepress/theme）は読む。キャッシュとビルド結果は除く
         const vitepress = ent.name === '.vitepress'
         const vitepressOutput = basename(dir) === '.vitepress' && (ent.name === 'cache' || ent.name === 'dist')
-        if (!IGNORE_DIRS.has(ent.name) && (!ent.name.startsWith('.') || vitepress) && !vitepressOutput) visit(p)
+        const ignored = IGNORE_DIRS.has(ent.name) || (dir === root && ROOT_IGNORE_DIRS.has(ent.name))
+        if (!ignored && (!ent.name.startsWith('.') || vitepress) && !vitepressOutput) visit(p)
       } else if (SKIP_FILE_RE.test(ent.name)) {
         continue
-      } else if (SOURCE_RE.test(ent.name) || STYLE_RE.test(ent.name) || (markdown && ent.name.endsWith('.md'))) {
+      } else if (SOURCE_RE.test(ent.name) || STYLE_RE.test(ent.name) || (ent.name.endsWith('.md') && inMarkdownDir(p))) {
         out.push(p)
       }
     }
@@ -143,7 +152,11 @@ export function analyze(rootDir: string, options: BuildOptions = {}): { graph: G
   const rel = (f: string) => relative(root, f).split(sep).join('/')
 
   const vitepress = isVitepress(root)
-  for (const file of scanFiles(root, { markdown: vitepress })) {
+  const srcDir = srcDirOf(root)
+  const nuxt = nuxtProjectOf(root, srcDir)
+  for (const layer of nuxt?.remoteLayers ?? []) warnings.push(t('remoteLayer', layer))
+  const markdownDirs = [...(vitepress ? [root] : []), ...(nuxt?.content ? [join(root, 'content')] : [])]
+  for (const file of scanFiles(root, { markdownDirs })) {
     const info = parseFile(file)
     // Markdown はコンポーネントを使っているページだけを残す
     if (file.endsWith('.md') && !info.imports.length && !info.tags.length) continue
@@ -153,12 +166,12 @@ export function analyze(rootDir: string, options: BuildOptions = {}): { graph: G
 
   const barrel = createBarrelResolver(infos, resolveImport)
 
-  const srcDir = srcDirOf(root)
   const auto = loadAutoImports(root, (spec, dts) => warnings.push(t('staleAutoImport', rel(dts), spec)))
   // .nuxt/ は nuxt dev / nuxt prepare で生成されるので、clone 直後や CI には無い
-  if (isNuxt(root) && !existsSync(join(root, '.nuxt/components.d.ts'))) {
-    for (const [key, t] of nuxtComponents(join(srcDir, 'components'))) if (!auto.has(key)) auto.set(key, t)
+  if (nuxt && !existsSync(join(root, '.nuxt/components.d.ts'))) {
+    for (const [key, t] of nuxtComponents(nuxt)) if (!auto.has(key)) auto.set(key, t)
   }
+  const libraries = uiLibraries(root)
 
   /** import のソースと名前から .vue ファイル（または外部パッケージ名）を求める */
   const targetOf = (source: string, imported: string, importer: string, async: boolean): Target | null => {
@@ -212,11 +225,14 @@ export function analyze(rootDir: string, options: BuildOptions = {}): { graph: G
   const nodes = new Map<string, GraphNode>()
   const edges = new Map<string, GraphEdge>()
   // ページをファイルで決める構成では、pages/ のコンポーネントをパスで呼ぶ（index や [id] だらけになるため）
-  const nuxtProject = isNuxt(root)
+  const nuxtProject = !!nuxt
   const pagesDir = join(srcDir, 'pages')
   const fileRouting = nuxtProject || ([...infos.values()].every((i) => !i.routes.length) && existsSync(pagesDir))
-  const nameOf = (file: string) => componentName(relative(srcDir, file), fileRouting)
-  const entryOf = (file: string) => isFrameworkEntry(relative(srcDir, file), { fileRouting, nuxt: nuxtProject, vitepress })
+  // Nuxt のレイヤーは、それぞれの srcDir からの相対パスで名前と pages/・layouts/ を判定する
+  const srcDirs = nuxt?.srcDirs ?? [srcDir]
+  const baseOf = (file: string) => srcDirs.find((d) => file.startsWith(d + sep)) ?? srcDir
+  const nameOf = (file: string) => componentName(relative(baseOf(file), file), fileRouting)
+  const entryOf = (file: string) => isFrameworkEntry(relative(baseOf(file), file), { fileRouting, nuxt: nuxtProject })
 
   const addEdge = (from: string, to: string, type: EdgeType, async: boolean) => {
     const key = `${from}\0${to}`
@@ -292,7 +308,8 @@ export function analyze(rootDir: string, options: BuildOptions = {}): { graph: G
         if (g?.file) return addEdge(from, rel(g.file), 'template', g.async)
         if (g?.external) return void (dynamic || externals.add(`${key} (${g.external})`))
         if (key === selfName) return addEdge(from, from, 'template', false)
-        if (!dynamic) externals.add(key)
+        // UI ライブラリの接頭辞（QBtn、UButton など）と RouterView は、そのライブラリの部品として扱う
+        if (!dynamic) externals.add(libraryOf(key, libraries) ? `${key} (${libraryOf(key, libraries)})` : key)
       }
       for (const tag of info.tags) use(tag, false)
       for (const name of info.dynamicIs) use(name, true)
@@ -396,16 +413,22 @@ export function analyze(rootDir: string, options: BuildOptions = {}): { graph: G
           : bindingTarget(info, ref.local!, targetOf)
         if (t?.file) own.push({ id: rel(t.file), view: ref.view })
       }
+      // メニュー用の外部リンク（path: 'https://...'）はページではない
+      if (isUrl(r.path)) return
       const path = r.dynamic ? (parentPath ? `${parentPath}/${r.path}` : r.path) : joinRoutePath(parentPath, r.path)
       const dynamic = parentDynamic || r.dynamic
       const view = (own.find((o) => o.view === 'default') ?? own[0])?.id
       // 子ルートの親として渡すのはメインの画面だけ（名前付きビューは子に引き継がない）
       const layouts = view ? [...parentChain, view] : parentChain
-      if (view && r.children.length) parentUses.set(view, (parentUses.get(view) ?? 0) + 1)
-      // redirect のあるルートはそれ自体を描画しない（子ルートのレイアウトとしては使う）
-      if (view && !r.redirect) {
-        // 空パスの子がないルートは、レイアウトだけを描画している可能性がある（判定は全ルートを見てから）
-        if (!r.children.some((c) => c.path === '')) wrappers.push({ index: routes.length, view, leaf: !r.children.length })
+      const children = r.children.filter((c) => !isUrl(c.path))
+      // 子が default のビューを埋める親（管理画面の Layout など）。子が名前付きビューだけなら、親自体が画面
+      const wraps = children.some((c) => c.refs.some((ref) => ref.view === 'default'))
+      if (view && wraps) parentUses.set(view, (parentUses.get(view) ?? 0) + 1)
+      // ページにしない親：redirect がある、空パスの子がそのページを描く、子が外部リンクだけ
+      const notPage = r.redirect || children.some((c) => c.path === '') || (r.children.length > 0 && !children.length)
+      if (view && !notPage) {
+        // レイアウトだけを描画している可能性があるもの（判定は全ルートを見てから）
+        if (wraps || !children.length) wrappers.push({ index: routes.length, view, leaf: !children.length })
         routes.push({
           path,
           dynamic,
@@ -415,13 +438,13 @@ export function analyze(rootDir: string, options: BuildOptions = {}): { graph: G
           source: rel(info.file),
         })
       }
-      for (const c of r.children) add(c, layouts, path, dynamic)
+      for (const c of children) add(c, layouts, path, dynamic)
     }
     for (const r of info.routes) add(r, [], '', false)
   }
-  // 複数の親ルートで使われている画面はレイアウト（管理画面の Layout など）。その親ルート自体はページに数えない。
-  // 子のないルートでレイアウトを指定したもの（メニュー用の外部リンクなど）も同じ。
-  // 1 か所でしか使われない親（一覧の /users に詳細の :id がぶら下がる形など）はページとして残す
+  // 複数の親ルートで子を包んでいる画面はレイアウト（管理画面の Layout など）。その親ルート自体はページに数えない。
+  // 子のないルートでそのレイアウトを指定したもの（メニュー項目など）も同じ。
+  // 1 か所でしか包まない親（一覧の /users に詳細の :id がぶら下がる形など）はページとして残す
   const layoutOnly = new Set(
     wrappers.filter((w) => (parentUses.get(w.view) ?? 0) > (w.leaf ? 0 : 1)).map((w) => w.index),
   )
@@ -430,10 +453,10 @@ export function analyze(rootDir: string, options: BuildOptions = {}): { graph: G
     routes.length = 0
     routes.push(...kept)
   }
-  const nuxt = nuxtRoutes(root, srcDir, rel)
   if (nuxt) {
-    routes.push(...nuxt.routes)
-    for (const id of nuxt.shell) shellRoots.add(id)
+    const pages = nuxtRoutes(nuxt, infos, rel)
+    routes.push(...pages.routes)
+    for (const id of pages.shell) shellRoots.add(id)
   }
 
   // ルートの起点から、コンポーネント同士の辺だけを辿る
@@ -463,14 +486,31 @@ export function analyze(rootDir: string, options: BuildOptions = {}): { graph: G
   })
 
   // 影響分析用：ファイル単位の参照（?raw、CSS、画像なども含む）
-  const deps: FileDeps = { static: new Map(), lazy: new Map(), hubs: new Set(), sinks: new Set() }
+  const deps: FileDeps = { static: new Map(), lazy: new Map(), hubs: new Set(), sinks: new Set(), missing: new Map() }
+  const unresolvedImports: Graph['unresolvedImports'] = []
   for (const info of infos.values()) {
     const statics = new Set<string>()
     const lazies = new Set<string>()
     const add = (set: Set<string>, file: string | null) => file && set.add(rel(file))
-    for (const i of info.imports) add(i.async ? lazies : statics, resolveImport(i.source, info.file))
-    for (const b of info.bareImports) add(b.async ? lazies : statics, resolveImport(b.source, info.file))
-    for (const r of info.reExports) if (r.source) add(statics, resolveImport(r.source, info.file))
+    // 解決できなかったプロジェクト内の import は、警告と削除の影響分析のために覚えておく
+    const code = (source: string) => {
+      const file = resolveImport(source, info.file)
+      if (!file) {
+        const target = localTarget(source, info.file)
+        if (target) {
+          if (!unresolvedImports.some((u) => u.from === rel(info.file) && u.spec === source)) {
+            unresolvedImports.push({ from: rel(info.file), spec: source })
+          }
+          const key = rel(target).replace(/\.(vue|[cm]?[jt]sx?)$/, '')
+          if (!deps.missing.has(key)) deps.missing.set(key, new Set())
+          deps.missing.get(key)!.add(rel(info.file))
+        }
+      }
+      return file
+    }
+    for (const i of info.imports) add(i.async ? lazies : statics, code(i.source))
+    for (const b of info.bareImports) add(b.async ? lazies : statics, code(b.source))
+    for (const r of info.reExports) if (r.source) add(statics, code(r.source))
     for (const a of info.assets) add(statics, resolveAsset(a, info.file))
     for (const f of globFiles(info)) add(lazies, f)
     deps.static.set(rel(info.file), statics)
@@ -494,10 +534,22 @@ export function analyze(rootDir: string, options: BuildOptions = {}): { graph: G
     routes,
     entries: [...entries],
     warnings,
+    unresolvedImports,
   }
+  const packages = workspacePackages(root, [...infos.keys()])
+  if (packages) graph.workspacePackages = packages
   if (vitepress) graph.vitepress = true
   else if (!routes.length && fileRouting && !nuxtProject) graph.unsupportedPagesDir = rel(pagesDir)
   return { graph, deps }
+
+  /** 相対パスと @/ ~/ の import が指すはずの絶対パス（ファイルが無くても求める）。それ以外は null */
+  function localTarget(source: string, importer: string): string | null {
+    const spec = source.split('?')[0]
+    if (spec.startsWith('.')) return resolve(dirname(importer), spec)
+    if (/^[@~]\//.test(spec)) return join(srcDir, spec.slice(2))
+    if (/^(~~|@@)\//.test(spec)) return join(root, spec.slice(3))
+    return null
+  }
 
   /** CSS の @import 'variables'（拡張子・_ 省略）や、public/ を指す /logo.png も解決する */
   function resolveAsset(ref: string, importer: string): string | null {
@@ -509,13 +561,17 @@ export function analyze(rootDir: string, options: BuildOptions = {}): { graph: G
     const hit = resolveImport(spec, importer)
     if (hit) return hit
     if (!STYLE_RE.test(importer) && !importer.endsWith('.vue')) return null
-    const dir = dirname(spec)
-    const name = basename(spec)
-    for (const candidate of [name, `_${name}`]) {
-      for (const ext of ['', '.scss', '.sass', '.less', '.styl', '.css']) {
-        const p = resolveImport(join(dir, candidate + ext), importer)
-        if (p) return p
-      }
+    // Sass: @use 'tooltip' → ./_tooltip.scss、@use '@/styles/mixins' → mixins/_index.scss
+    const base = /^[.@~]/.test(spec) ? spec : `./${spec}`
+    const dir = dirname(base)
+    const name = basename(base)
+    const candidates = [name, `_${name}`].flatMap((n) =>
+      ['', '.scss', '.sass', '.less', '.styl', '.css'].map((ext) => `${dir}/${n}${ext}`),
+    )
+    candidates.push(...['_index', 'index'].flatMap((n) => ['.scss', '.sass'].map((ext) => `${base}/${n}${ext}`)))
+    for (const candidate of candidates) {
+      const p = resolveImport(candidate, importer)
+      if (p && isFile(p)) return p
     }
     return null
   }
@@ -550,10 +606,43 @@ export function globToRegExp(glob: string): RegExp {
 
 const escapeRe = (s: string) => s.replace(/[.+^$()|[\]\\]/g, '\\$&')
 
+/**
+ * モノレポのルート（pnpm-workspace.yaml、package.json の workspaces、lerna.json）なら、
+ * .vue を含むパッケージのディレクトリを返す
+ */
+function workspacePackages(root: string, files: string[]): string[] | null {
+  const pkg = (() => {
+    try {
+      return JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'))
+    } catch {
+      return {}
+    }
+  })()
+  const isWorkspace = existsSync(join(root, 'pnpm-workspace.yaml')) || existsSync(join(root, 'lerna.json')) || !!pkg.workspaces
+  if (!isWorkspace) return null
+  const packages = new Set<string>()
+  for (const file of files) {
+    if (!file.endsWith('.vue')) continue
+    let owner = root
+    for (let d = dirname(file); d !== root && d.startsWith(root); d = dirname(d)) {
+      if (existsSync(join(d, 'package.json'))) {
+        owner = d
+        break
+      }
+    }
+    // ルート自体がアプリ（elk や nuxt.com のように docs/ だけが別パッケージ）なら、モノレポのルートとは扱わない
+    if (owner === root) return null
+    packages.add(relative(root, owner).split(sep).join('/'))
+  }
+  return packages.size ? [...packages].sort() : null
+}
+
 /** VitePress のサイト（.vitepress がルートか docs/・src/ にある） */
 function isVitepress(root: string): boolean {
   return ['', 'docs', 'src'].some((d) => existsSync(join(root, d, '.vitepress')))
 }
+
+const isUrl = (path: string) => /^[a-z][\w+.-]*:\/\//i.test(path)
 
 function joinRoutePath(parent: string, child: string): string {
   if (child.startsWith('/')) return child
@@ -561,85 +650,182 @@ function joinRoutePath(parent: string, child: string): string {
   return `${parent.replace(/\/$/, '')}/${child}`
 }
 
-/** Nuxt のファイルベースルーティング（pages/）と、全ページ共通の app.vue / layouts/default.vue */
-function nuxtRoutes(root: string, srcDir: string, rel: (f: string) => string) {
-  if (!isNuxt(root)) return null
-  const shell = ['app.vue', 'layouts/default.vue']
-    .map((p) => join(srcDir, p))
-    .filter((p) => existsSync(p))
-    .map(rel)
-  const routes: RouteInfo[] = []
-  const pagesDir = join(srcDir, 'pages')
-  if (!existsSync(pagesDir)) return { routes, shell }
-
-  const files: string[] = []
-  const visit = (dir: string) => {
-    for (const ent of readdirSync(dir, { withFileTypes: true })) {
-      const p = join(dir, ent.name)
-      if (ent.isDirectory()) visit(p)
-      else if (ent.name.endsWith('.vue')) files.push(p)
-    }
-  }
-  visit(pagesDir)
-
-  for (const file of files.sort()) {
-    // pages/settings.vue と pages/settings/index.vue があれば、/settings は index.vue（settings.vue はその親）
-    if (existsSync(join(file.replace(/\.vue$/, ''), 'index.vue'))) continue
-    const segs = relative(pagesDir, file).replace(/\.vue$/, '').split(sep)
-    const parts = segs
-      .filter((seg) => seg !== 'index' && !/^\(.*\)$/.test(seg))
-      .map((seg) =>
-        seg
-          .replace(/\[\[(\w+)\]\]/g, ':$1?')
-          .replace(/\[\.\.\.(\w+)\]/g, ':$1(.*)*')
-          .replace(/\[(\w+)\]/g, ':$1'),
-      )
-    // pages/users.vue があれば pages/users/[id].vue の親ルートになる
-    const layouts: string[] = []
-    for (let i = 1; i < segs.length; i++) {
-      const parent = join(pagesDir, ...segs.slice(0, i)) + '.vue'
-      if (existsSync(parent)) layouts.push(rel(parent))
-    }
-    const view = rel(file)
-    routes.push({ path: '/' + parts.join('/'), dynamic: false, view, layouts, chain: [...layouts, view], source: rel(pagesDir) })
-  }
-  return { routes, shell }
+interface NuxtProject {
+  /** アプリと、リポジトリ内のレイヤーの srcDir（アプリが先。同じものはアプリが優先） */
+  srcDirs: string[]
+  /** Nuxt Content を使っている（components/content がグローバルになり、content/ の Markdown から使う） */
+  content: boolean
+  /** extends に書かれた、リポジトリの外のレイヤー（npm パッケージや github:） */
+  remoteLayers: string[]
 }
 
-function isNuxt(root: string): boolean {
-  return ['ts', 'js', 'mjs', 'mts'].some((ext) => existsSync(join(root, `nuxt.config.${ext}`)))
+function nuxtProjectOf(root: string, srcDir: string): NuxtProject | null {
+  const config = ['ts', 'js', 'mjs', 'mts'].map((ext) => join(root, `nuxt.config.${ext}`)).find((p) => existsSync(p))
+  if (!config) return null
+  const text = readFileSync(config, 'utf8')
+  const layerRoots: string[] = []
+  const remoteLayers: string[] = []
+  const ext = text.match(/extends\s*:\s*(\[[^\]]*\]|['"`][^'"`]+['"`])/)
+  for (const m of ext?.[1].matchAll(/['"`]([^'"`]+)['"`]/g) ?? []) {
+    if (/^[./~]/.test(m[1])) layerRoots.push(resolve(root, m[1].replace(/^~~?\//, './')))
+    else remoteLayers.push(m[1])
+  }
+  // Nuxt 3.12 以降は layers/ の下を自動でレイヤーにする
+  const autoLayers = join(root, 'layers')
+  if (isDir(autoLayers)) {
+    for (const ent of readdirSync(autoLayers, { withFileTypes: true })) if (ent.isDirectory()) layerRoots.push(join(autoLayers, ent.name))
+  }
+  const srcDirs = [...new Set([srcDir, ...layerRoots.filter(isDir).map(srcDirOf)])]
+  const content = /@nuxt\/content/.test(text) || dependsOn(root, '@nuxt/content')
+  return { srcDirs, content, remoteLayers }
+}
+
+/** Nuxt のファイルベースルーティング（各レイヤーの pages/）と、definePageMeta で決まるレイアウト */
+function nuxtRoutes(nuxt: NuxtProject, infos: Map<string, FileInfo>, rel: (f: string) => string) {
+  const firstExisting = (paths: string[]) => paths.find((p) => existsSync(p))
+  const app = firstExisting(nuxt.srcDirs.map((d) => join(d, 'app.vue')))
+  const shell = app ? [rel(app)] : []
+  const layoutFile = (name: string) =>
+    firstExisting(nuxt.srcDirs.flatMap((d) => [join(d, 'layouts', `${name}.vue`), join(d, 'layouts', name, 'index.vue')]))
+
+  const routes: RouteInfo[] = []
+  const seenPaths = new Set<string>()
+  for (const srcDir of nuxt.srcDirs) {
+    const pagesDir = join(srcDir, 'pages')
+    if (!isDir(pagesDir)) continue
+    const files: string[] = []
+    const visit = (dir: string) => {
+      for (const ent of readdirSync(dir, { withFileTypes: true })) {
+        const p = join(dir, ent.name)
+        if (ent.isDirectory()) visit(p)
+        else if (ent.name.endsWith('.vue')) files.push(p)
+      }
+    }
+    visit(pagesDir)
+
+    for (const file of files.sort()) {
+      // pages/settings.vue と pages/settings/index.vue があれば、/settings は index.vue（settings.vue はその親）
+      if (existsSync(join(file.replace(/\.vue$/, ''), 'index.vue'))) continue
+      const segs = relative(pagesDir, file).replace(/\.vue$/, '').split(sep)
+      const parts = segs
+        .filter((seg) => seg !== 'index' && !/^\(.*\)$/.test(seg))
+        .map((seg) =>
+          seg
+            .replace(/\[\[(\w+)\]\]/g, ':$1?')
+            .replace(/\[\.\.\.(\w+)\]/g, ':$1(.*)*')
+            .replace(/\[(\w+)\]/g, ':$1'),
+        )
+      const path = '/' + parts.join('/')
+      // 同じ URL はアプリ（先に見るレイヤー）が優先
+      if (seenPaths.has(path)) continue
+      seenPaths.add(path)
+      // pages/users.vue があれば pages/users/[id].vue の親ルートになる
+      const parents: string[] = []
+      for (let i = 1; i < segs.length; i++) {
+        const parent = join(pagesDir, ...segs.slice(0, i)) + '.vue'
+        if (existsSync(parent)) parents.push(parent)
+      }
+      // レイアウトは、いちばん内側で definePageMeta({ layout }) を書いたページで決まる（無ければ default）
+      let layout: string | false = 'default'
+      for (const f of [file, ...[...parents].reverse()]) {
+        const meta = infos.get(f)?.pageLayout
+        if (meta !== undefined) {
+          layout = meta
+          break
+        }
+      }
+      const layoutPath = layout === false ? undefined : layoutFile(layout)
+      const layouts = [...(layoutPath ? [rel(layoutPath)] : []), ...parents.map(rel)]
+      const view = rel(file)
+      routes.push({ path, dynamic: false, view, layouts, chain: [...layouts, view], source: rel(pagesDir) })
+    }
+  }
+  return { routes, shell }
 }
 
 const NUXT_BUILTINS = [
   'NuxtLink', 'NuxtPage', 'NuxtLayout', 'NuxtErrorBoundary', 'NuxtLoadingIndicator', 'NuxtRouteAnnouncer',
   'NuxtAnnouncer', 'NuxtClientFallback', 'NuxtIsland', 'NuxtTime', 'NuxtWelcome', 'NuxtImg', 'NuxtPicture',
   'ClientOnly', 'DevOnly', 'ServerPlaceholder',
+  // Nuxt Content
+  'ContentRenderer', 'ContentDoc', 'ContentList', 'ContentQuery', 'ContentSlot', 'ContentNavigation', 'MDC',
 ]
 
 /**
- * .nuxt/components.d.ts が無いときに、components/ から Nuxt と同じ規則で名前を組み立てる。
- * components/user/Card.vue → UserCard、components/base/BaseButton.vue → BaseButton（重複は省く）
+ * .nuxt/components.d.ts が無いときに、各レイヤーの components/ から Nuxt と同じ規則で名前を組み立てる。
+ * components/user/Card.vue → UserCard、components/base/BaseButton.vue → BaseButton（重複は省く）。
+ * components/global/ は別のディレクトリとして数え（global/Badge.vue → Badge）、
+ * Nuxt Content の components/content/ はディレクトリを名前に含めない（content/prose/ProseA.vue → ProseA）
  */
-function nuxtComponents(componentsDir: string): Map<string, Target> {
+function nuxtComponents(nuxt: NuxtProject): Map<string, Target> {
   const map = new Map<string, Target>(NUXT_BUILTINS.map((name) => [name, { external: 'nuxt', async: false }]))
-  if (!existsSync(componentsDir)) return map
-  const visit = (dir: string) => {
+  const add = (file: string, name: string) => {
+    if (!name || map.has(name)) return
+    map.set(name, { file, async: false })
+    map.set(`Lazy${name}`, { file, async: true })
+  }
+  const visit = (dir: string, base: string, pathPrefix: boolean, skip: Set<string>) => {
     for (const ent of readdirSync(dir, { withFileTypes: true })) {
       const p = join(dir, ent.name)
-      if (ent.isDirectory()) visit(p)
-      else if (ent.name.endsWith('.vue')) {
+      if (ent.isDirectory()) {
+        if (!(dir === base && skip.has(ent.name))) visit(p, base, pathPrefix, skip)
+      } else if (ent.name.endsWith('.vue')) {
         let fileName = basename(ent.name, '.vue').replace(/(\.(server|client))?(\.global)?$/, '')
-        if (fileName.toLowerCase() === 'index') fileName = ''
-        const prefix = splitByCase(relative(componentsDir, dir))
-        const name = nuxtComponentName(splitByCase(fileName), prefix)
-        if (!name || map.has(name)) continue
-        map.set(name, { file: p, async: false })
-        map.set(`Lazy${name}`, { file: p, async: true })
+        if (fileName.toLowerCase() === 'index') fileName = pathPrefix ? '' : basename(dir)
+        const prefix = pathPrefix ? splitByCase(relative(base, dir)) : []
+        add(p, nuxtComponentName(splitByCase(fileName), prefix))
       }
     }
   }
-  visit(componentsDir)
+  for (const srcDir of nuxt.srcDirs) {
+    const base = join(srcDir, 'components')
+    if (!isDir(base)) continue
+    const special: [string, boolean][] = [['global', true], ...(nuxt.content ? [['content', false] as [string, boolean]] : [])]
+    for (const [dir, pathPrefix] of special) if (isDir(join(base, dir))) visit(join(base, dir), join(base, dir), pathPrefix, new Set())
+    visit(base, base, true, new Set(special.map(([dir]) => dir)))
+  }
   return map
+}
+
+/** UI ライブラリと、その部品の接頭辞（プラグインでまとめて登録されるので import 文がない） */
+const UI_LIBRARIES: [string, RegExp][] = [
+  ['quasar', /^Q[A-Z]/],
+  ['@nuxt/ui', /^U[A-Z]/],
+  ['@nuxt/ui-pro', /^U[A-Z]/],
+  ['vuetify', /^V[A-Z]/],
+  ['element-plus', /^El[A-Z]/],
+  ['element-ui', /^El[A-Z]/],
+  ['naive-ui', /^N[A-Z]/],
+  ['ant-design-vue', /^A[A-Z]/],
+  ['@arco-design/web-vue', /^A[A-Z]/],
+  ['@ionic/vue', /^Ion[A-Z]/],
+  ['vant', /^Van[A-Z]/],
+]
+
+function uiLibraries(root: string): [string, RegExp][] {
+  return UI_LIBRARIES.filter(([pkg]) => dependsOn(root, pkg))
+}
+
+function libraryOf(name: string, libraries: [string, RegExp][]): string | null {
+  if (name === 'RouterView' || name === 'RouterLink') return 'vue-router'
+  return libraries.find(([, re]) => re.test(name))?.[0] ?? null
+}
+
+function dependsOn(root: string, pkg: string): boolean {
+  try {
+    const json = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'))
+    return [json.dependencies, json.devDependencies, json.peerDependencies].some((deps) => deps && pkg in deps)
+  } catch {
+    return false
+  }
+}
+
+function isDir(p: string): boolean {
+  try {
+    return statSync(p).isDirectory()
+  } catch {
+    return false
+  }
 }
 
 /** Nuxt の resolveComponentNameSegments と同じ。ファイル名がディレクトリ名で始まるなら、その分を省く */
@@ -806,13 +992,11 @@ function groupOf(pathFromSrc: string): string {
 }
 
 /** フレームワークが直接描画するファイル（Nuxt の pages/・layouts/、ファイルベースルーティングの pages/、App.vue など） */
-function isFrameworkEntry(
-  pathFromSrc: string,
-  { fileRouting, nuxt, vitepress }: { fileRouting: boolean; nuxt: boolean; vitepress: boolean },
-): boolean {
+function isFrameworkEntry(pathFromSrc: string, { fileRouting, nuxt }: { fileRouting: boolean; nuxt: boolean }): boolean {
   const p = pathFromSrc.split(sep).join('/')
   if (/^(app|App)\.vue$/.test(p)) return true
-  if (vitepress && p.endsWith('.md')) return true
+  // 解析対象にした Markdown（VitePress・Nuxt Content のページ）
+  if (p.endsWith('.md')) return true
   // ファイルベースルーティングでは layouts/ も vite-plugin-vue-layouts などが描画する
   if (fileRouting && /^(pages|layouts)\//.test(p)) return true
   return nuxt && p === 'error.vue'

@@ -72,6 +72,8 @@ export interface FileInfo {
   createsRouter: boolean
   /** トップレベルの別名（`const Perms = withInstall(perms)` → Perms: perms） */
   aliases: Record<string, string>
+  /** Nuxt のページの `definePageMeta({ layout })`。false はレイアウトなし */
+  pageLayout?: string | false
   /** template の src / href、CSS の @import / url() など、コード以外の参照（影響分析用） */
   assets: string[]
   errors: string[]
@@ -257,6 +259,28 @@ function parseScript(code: string, lang: string, info: FileInfo) {
     }
     const dyn = dynamicImportSource(node)
     if (dyn && !bound.has(node)) info.bareImports.push({ source: dyn, async: true })
+    // webpack の require.context('./components', true, /\.vue$/)
+    if (
+      node.type === 'CallExpression' &&
+      node.callee.type === 'MemberExpression' &&
+      node.callee.object.type === 'Identifier' &&
+      node.callee.object.name === 'require' &&
+      node.callee.property.type === 'Identifier' &&
+      node.callee.property.name === 'context' &&
+      node.arguments[0]?.type === 'StringLiteral'
+    ) {
+      const dir = node.arguments[0].value.replace(/\/$/, '')
+      const deep = node.arguments[1]?.type === 'BooleanLiteral' ? node.arguments[1].value : true
+      const re = node.arguments[2]?.type === 'RegExpLiteral' ? node.arguments[2].pattern : ''
+      info.globs.push(`${dir.startsWith('.') ? dir : `./${dir}`}/${deep ? '**/' : ''}*${/vue/.test(re) ? '.vue' : ''}`)
+    }
+    // Nuxt の definePageMeta({ layout: 'admin' }) / { layout: false }
+    if (node.type === 'CallExpression' && node.callee.type === 'Identifier' && node.callee.name === 'definePageMeta') {
+      const arg = node.arguments[0]
+      const layout = arg?.type === 'ObjectExpression' ? arg.properties.find((p: any) => propKey(p) === 'layout')?.value : null
+      if (layout?.type === 'StringLiteral') info.pageLayout = layout.value
+      else if (layout?.type === 'BooleanLiteral' && !layout.value) info.pageLayout = false
+    }
     // import.meta.glob('./views/**/*.vue') / glob(['a', '!b'])
     if (
       node.type === 'CallExpression' &&
@@ -297,7 +321,10 @@ function toRoute(obj: any, code: string): RawRoute | null {
     const k = propKey(p)
     if (k) props.set(k, p.value)
   }
-  if (!props.has('path') || !['component', 'components', 'children'].some((k) => props.has(k))) return null
+  if (!props.has('path')) return null
+  // 外部リンクのメニュー項目（{ path: 'https://...' }）は、ページから外すために拾っておく
+  const link = props.get('path').type === 'StringLiteral' && /^[a-z][\w+.-]*:\/\//i.test(props.get('path').value)
+  if (!link && !['component', 'components', 'children'].some((k) => props.has(k))) return null
 
   const pathNode = props.get('path')
   let path: string
@@ -351,16 +378,17 @@ function isLocalRef(ref: string): boolean {
  */
 function parseMarkdown(source: string, info: FileInfo) {
   info.kind = 'component'
-  for (const m of source.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/g)) {
+  // コードブロック内の <script> や <Foo /> はサンプルなので、先に取り除く
+  const text = source.replace(/^([ \t]*)(```|~~~)[\s\S]*?^\1\2/gm, '').replace(/`[^`\n]*`/g, '')
+  for (const m of text.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/g)) {
     const lang = m[1].match(/lang=["'](\w+)["']/)?.[1] ?? 'js'
     parseScript(m[2], lang, info)
   }
-  const body = source
-    .replace(/<script\b[\s\S]*?<\/script>/g, '')
-    .replace(/<style\b[\s\S]*?<\/style>/g, '')
-    .replace(/^(```|~~~)[\s\S]*?^\1/gm, '')
-    .replace(/`[^`\n]*`/g, '')
+  const body = text.replace(/<script\b[\s\S]*?<\/script>/g, '').replace(/<style\b[\s\S]*?<\/style>/g, '')
   for (const m of body.matchAll(/<([A-Z][\w]*|[a-z][a-z0-9]*(?:-[a-z0-9]+)+)(?=[\s/>])/g)) info.tags.push(m[1])
+  // Nuxt Content（MDC）の ::read-more（ブロック）と :badge[...] / :icon{...}（インライン）
+  for (const m of body.matchAll(/^\s*::+([a-zA-Z][\w-]*)/gm)) info.tags.push(m[1])
+  for (const m of body.matchAll(/(?:^|[\s(]):([a-zA-Z][\w-]*)(?=[[{])/gm)) info.tags.push(m[1])
 }
 
 /** `Foo` や `withInstall(Foo)` のように、そのまま（または包んで）公開している変数名 */
@@ -378,11 +406,16 @@ function propKey(p: any): string | null {
   return null
 }
 
+/** `import('./X.vue')`、および webpack の `require('./X')` / `require(['./X'], resolve)` */
 function dynamicImportSource(node: any): string | null {
   let arg
   if (node.type === 'CallExpression' && node.callee.type === 'Import') arg = node.arguments[0]
   else if (node.type === 'ImportExpression') arg = node.source
-  else return null
+  else if (node.type === 'CallExpression' && node.callee.type === 'Identifier' && node.callee.name === 'require') {
+    arg = node.arguments[0]?.type === 'ArrayExpression' && node.arguments[0].elements.length === 1
+      ? node.arguments[0].elements[0]
+      : node.arguments[0]
+  } else return null
   if (arg?.type === 'StringLiteral') return arg.value
   if (arg?.type === 'TemplateLiteral' && arg.expressions.length === 0) return arg.quasis[0].value.cooked
   return null
@@ -401,7 +434,11 @@ function lazyComponent(node: any): { node: any; source: string } | null {
     case 'ArrowFunctionExpression':
     case 'FunctionExpression': {
       const body = node.body.type === 'BlockStatement' ? node.body.body.find((s: any) => s.type === 'ReturnStatement')?.argument : node.body
-      return lazyComponent(body)
+      const direct = lazyComponent(body)
+      if (direct) return direct
+      // webpack: r => require.ensure([], () => r(require('./X')), 'chunk') / resolve => require(['./X'], resolve)
+      const found = collectDynamicImports(node.body)
+      return found.length === 1 ? found[0] : null
     }
     case 'AwaitExpression':
     case 'TSAsExpression':

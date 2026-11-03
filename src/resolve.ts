@@ -29,10 +29,26 @@ export function createResolver(root: string): Resolver {
     spec = spec.split('?')[0]
     const key = spec.startsWith('.') ? `${dirname(importer)}\0${spec}` : spec
     if (cache.has(key)) return cache.get(key)!
-    const result = resolveUncached(spec, importer, aliases)
+    const result = resolveUncached(spec, importer, aliases) ?? resolveFromProjectDirs(spec, root)
     cache.set(key, result)
     return result
   }
+}
+
+/**
+ * webpack の alias / resolve.modules でよくある、プロジェクト直下か src/ のディレクトリ名で始まる import
+ * （`src/components/Foo`、`components/Foo`）。設定は読まないので、実在するファイルに解決できるときだけ使う
+ */
+function resolveFromProjectDirs(spec: string, root: string): string | null {
+  const first = spec.split('/')[0]
+  if (!/^[\w-]+$/.test(first) || first === 'node_modules' || !spec.includes('/')) return null
+  for (const base of [root, srcDirOf(root)]) {
+    if (isDir(join(base, first))) {
+      const hit = resolveFile(join(base, spec))
+      if (hit) return hit
+    }
+  }
+  return null
 }
 
 function resolveUncached(spec: string, importer: string, aliases: PathAlias[]): string | null {

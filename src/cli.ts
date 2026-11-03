@@ -10,7 +10,7 @@ import { renderHtml } from './html'
 import { analyzeImpact, gitChangedFiles, type Impact } from './impact'
 import { startMcpServer } from './mcp'
 import { defaultOutPath } from './output'
-import { componentInfo, noRoutesReason, pick, QueryError, summaryLine, whoUses } from './report'
+import { componentInfo, noRoutesReason, pick, projectNotes, QueryError, summaryLine, unresolvedLines, whoUses } from './report'
 import { checkProjectRoot } from './root'
 
 // ヘルプの文言も切り替えるので、コマンドを定義する前に決める
@@ -82,8 +82,8 @@ cli
     const out = opts.out ? resolve(opts.out) : defaultOutPath(root)
     mkdirSync(dirname(out), { recursive: true })
     writeFileSync(out, renderHtml(full, { initialFocus, impact, lang: explicitLang() }))
-    // 絞り込んだときは、件数の要約ではなくそのコンポーネントの結果を出す
-    console.log((report ?? summaryLines(graph)).join('\n'))
+    // 絞り込んだときはそのコンポーネントの結果、--since のときは影響だけを出す（未使用の一覧などは混ぜない）
+    console.log((report ?? (impact ? [summaryLine(graph), ...projectNotes(graph)] : summaryLines(graph))).join('\n'))
     if (impact) console.log('\n' + impactLines(full, impact, t('diffFrom', impact.since)).join('\n'))
     console.log(`\n→ ${out}`)
     if (opts.open) openInBrowser(out)
@@ -126,11 +126,15 @@ function orFail<T>(fn: () => T): T {
 }
 
 function summaryLines(graph: Graph): string[] {
-  const lines = [summaryLine(graph)]
+  const lines = [summaryLine(graph), ...projectNotes(graph)]
   if (!graph.routes.length) lines.push(noRoutesReason(graph))
   if (graph.orphans.length) lines.push('', `${t('unused')} (${graph.orphans.length})`, ...graph.orphans.map((id) => `  ${id}`))
   if (graph.cycles.length) {
     lines.push('', `${t('cycles')} (${graph.cycles.length})`, ...graph.cycles.map((c) => `  ${[...c, c[0]].join(' → ')}`))
+  }
+  if (graph.unresolvedImports.length) {
+    lines.push('', t('unresolvedImports', graph.unresolvedImports.length), ...unresolvedLines(graph, 5).map((l) => `  ${l}`))
+    lines.push(`  ${t('unresolvedImportsHint')}`)
   }
   if (graph.warnings.length) {
     lines.push('', `${t('warnings')} (${graph.warnings.length})`, ...graph.warnings.slice(0, 10).map((w) => `  ${w}`))

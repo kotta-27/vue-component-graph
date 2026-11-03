@@ -162,7 +162,7 @@ export function routesReport(graph: Graph): string[] {
 }
 
 export function issuesReport(graph: Graph): string[] {
-  const lines = [summaryLine(graph)]
+  const lines = [summaryLine(graph), ...projectNotes(graph)]
   const section = (title: string, items: string[]) => {
     lines.push('', `${title} (${items.length})`)
     lines.push(...(items.length ? items.map((s) => `  ${s}`) : [`  ${t('none')}`]))
@@ -170,7 +170,22 @@ export function issuesReport(graph: Graph): string[] {
   section(t('unused'), graph.orphans)
   section(t('cycles'), graph.cycles.map((c) => [...c, c[0]].map((id) => nameOf(graph, id)).join(' → ')))
   section(t('recursive'), graph.recursive)
+  if (graph.unresolvedImports.length) {
+    section(t('unresolvedImports', graph.unresolvedImports.length).replace(/ \(\d+\)$/, ''), unresolvedLines(graph, 30))
+    lines.push(`  ${t('unresolvedImportsHint')}`)
+  }
   if (graph.warnings.length) section(t('warnings'), graph.warnings.slice(0, 30))
+  return lines
+}
+
+/** 前提が崩れていそうなときの注意（モノレポのルートで実行した、など） */
+export function projectNotes(graph: Graph): string[] {
+  return graph.workspacePackages ? [t('monorepoRoot', graph.workspacePackages)] : []
+}
+
+export function unresolvedLines(graph: Graph, limit: number): string[] {
+  const lines = graph.unresolvedImports.slice(0, limit).map((u) => `${u.from}: ${u.spec}`)
+  if (graph.unresolvedImports.length > limit) lines.push(t('moreWarnings', graph.unresolvedImports.length - limit))
   return lines
 }
 

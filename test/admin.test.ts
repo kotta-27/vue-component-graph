@@ -57,7 +57,8 @@ describe('template resolution', () => {
 
   it('keeps unresolved tags apart from library components', () => {
     const info = componentInfo(graph, 'App').join('\n')
-    expect(info).toContain('Unresolved tags (registered by a plugin, or a missing import): RouterView')
+    expect(info).toContain('Unresolved tags (registered by a plugin, or a missing import): MissingWidget')
+    expect(info).toContain('External components: RouterView (vue-router)')
   })
 })
 
@@ -118,7 +119,7 @@ describe('Nuxt nested index pages', () => {
     const g = buildGraph(fileURLToPath(new URL('./fixtures/nuxt-bare', import.meta.url)))
     const settings = g.routes.filter((r) => r.path === '/settings')
     expect(settings).toHaveLength(1)
-    expect(settings[0].chain).toEqual(['app/pages/settings.vue', 'app/pages/settings/index.vue'])
+    expect(settings[0].chain).toEqual(['app/layouts/default.vue', 'app/pages/settings.vue', 'app/pages/settings/index.vue'])
     expect(g.routes.map((r) => r.path)).toContain('/settings/members')
   })
 })
@@ -141,8 +142,9 @@ describe('VitePress', () => {
     expect(g.vitepress).toBe(true)
   })
 
-  it('ignores tags inside code blocks', () => {
+  it('ignores tags and <script> examples inside code blocks', () => {
     expect(g.nodes.find((n) => n.id === 'guide/intro.md')!.externals).toEqual([])
+    expect(g.unresolvedImports).toEqual([])
   })
 })
 

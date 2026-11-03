@@ -1,7 +1,8 @@
 import { execFileSync } from 'node:child_process'
-import { existsSync } from 'node:fs'
-import { relative, resolve, sep } from 'node:path'
+import { existsSync, realpathSync } from 'node:fs'
+import { basename, dirname, join, relative, resolve, sep } from 'node:path'
 import type { FileDeps, Graph } from './graph'
+import { t } from './i18n'
 
 export interface Impact {
   since: string
@@ -9,6 +10,8 @@ export interface Impact {
   changed: string[]
   /** changed のうち削除されたファイル */
   deleted: string[]
+  /** 変更したのに、どのコンポーネント・ページにもつながらなかったファイル（解析で追えていない可能性がある） */
+  unlinked: string[]
   /** 変更の影響を受けるコンポーネント（変更されたものを含む） */
   affected: string[]
   /** 確認すべきルート（Graph.routes の添字） */
@@ -22,7 +25,32 @@ export function gitChangedFiles(root: string, since: string): string[] {
   const git = (...args: string[]) =>
     execFileSync('git', args, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
   const top = git('rev-parse', '--show-toplevel')
-  const base = git('merge-base', since, 'HEAD')
+  let base: string
+  try {
+    base = git('merge-base', since, 'HEAD')
+  } catch (e) {
+    // ref が無いなら、ありそうな候補（origin のデフォルトブランチなど）を添える
+    const exists = (ref: string) => {
+      try {
+        git('rev-parse', '--verify', '--quiet', `${ref}^{commit}`)
+        return true
+      } catch {
+        return false
+      }
+    }
+    if (exists(since)) throw e
+    const remoteHead = (() => {
+      try {
+        return git('symbolic-ref', '--short', 'refs/remotes/origin/HEAD')
+      } catch {
+        return ''
+      }
+    })()
+    const hints = [remoteHead, `origin/${since}`, 'main', 'master', 'develop', 'origin/main', 'origin/master']
+      .filter((r, i, all) => r && r !== since && all.indexOf(r) === i && exists(r))
+      .slice(0, 3)
+    throw new Error(t('refNotFound', since, hints.join(', ')))
+  }
   const lines = [
     ...git('diff', '--name-only', base).split('\n'),
     ...git('-C', top, 'ls-files', '--others', '--exclude-standard').split('\n'),
@@ -48,6 +76,20 @@ export function analyzeImpact(
   /** 「これらを変えたら」と仮定したファイル（まだ無くてもよいので、削除扱いにしない） */
   hypothetical: string[] = [],
 ): Impact {
+  // graph.root はシンボリックリンクを解決済みなので、変更ファイルも揃える（macOS の /var → /private/var など）
+  const real = (f: string) => {
+    try {
+      return realpathSync(f)
+    } catch {
+      try {
+        return join(realpathSync(dirname(f)), basename(f)) // 削除済みのファイル
+      } catch {
+        return f
+      }
+    }
+  }
+  changedFiles = changedFiles.map(real)
+  hypothetical = hypothetical.map(real)
   const rel = (f: string) => relative(graph.root, f).split(sep).join('/')
   const nodeById = new Map(graph.nodes.map((n) => [n.id, n]))
   const isComponent = (id: string) => nodeById.get(id)?.kind === 'component'
@@ -81,8 +123,16 @@ export function analyzeImpact(
     .filter((id) => !id.startsWith('..') && (ANALYZED_RE.test(id) || (graph.vitepress && id.endsWith('.md'))))
   const changed = [...new Set([...changedFiles.map(rel).filter(known), ...deleted])]
 
+  // 削除したファイルを、まだ import しているファイル（import は解決できなくなっている）
+  const importersOfDeleted = (id: string): string[] => {
+    const base = id.replace(/\.(vue|[cm]?[jt]sx?)$/, '')
+    const keys = [base, ...(/\/index$/.test(base) ? [base.replace(/\/index$/, '')] : [])]
+    return keys.flatMap((k) => [...(deps.missing.get(k) ?? [])])
+  }
+
   const usersOf = (id: string): string[] => {
     const out = new Set(componentUsers.get(id))
+    for (const u of importersOfDeleted(id)) out.add(u)
     for (const u of staticUsers.get(id) ?? []) {
       if (isComponent(id) && deps.hubs.has(u)) continue
       out.add(u)
@@ -119,10 +169,23 @@ export function analyzeImpact(
   })
   if (everywhere) graph.routes.forEach((_, i) => routes.add(i))
 
+  // 変更したのに何にもつながらなかったファイル。黙って「影響なし」にしない
+  const reachedFrom = (id: string) => {
+    const users = usersOf(id)
+    return isComponent(id) || users.length > 0 || graph.entries.includes(id) || graph.routes.some((r) => r.source === id)
+  }
+  const sourceLike = /\.(vue|[cm]?[jt]sx?|css|scss|sass|less|styl|pcss|svg|png|jpe?g|gif|webp|avif|woff2?|json)$/
+  const unlinked = changedFiles
+    .map(rel)
+    .filter((id) => !id.startsWith('..') && sourceLike.test(id) && !deleted.includes(id) && existsSync(resolve(graph.root, id)))
+    .filter((id) => !known(id) || !reachedFrom(id))
+    .sort()
+
   return {
     since,
     changed: changed.sort(),
     deleted: deleted.sort(),
+    unlinked,
     affected,
     routes: [...routes].sort((a, b) => a - b),
     everywhere,
