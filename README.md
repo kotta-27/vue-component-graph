@@ -180,15 +180,20 @@ Components are named the way Vue resolves them: `SvgIcon/index.vue` is `SvgIcon`
 
 | Action | What it does |
 |---|---|
-| Hover / click | Highlights the component's ancestors and descendants |
+| Hover / click | Highlights the component's ancestors and descendants. In large projects, clicking a component shows its neighborhood |
 | Details panel | Components that use it, components it uses, pages it appears on, external components |
-| "Show descendants only" / "Show users" | Narrows the graph to that scope. Summary counts are recalculated for the narrowed scope |
+| "Show descendants only" / "Show users" / "Show neighborhood" | Narrows the graph to that scope (the neighborhood is 1–4 steps up and down; change it with − / +). Summary counts are recalculated for the narrowed scope |
+| Pages tab | Pick a page to see only the components on it |
+| "Hide shared parts" | Components used by many others (buttons, …) are not drawn; their users show `+N` instead |
+| "Group by directory" | Each directory becomes one box, with edge thickness showing how many dependencies cross; click a box to open it |
 | "Open in VS Code" | Opens the file in your editor |
 | Tabs | Overview (unused, cycles, …) / List (sortable by parents, children, lines) / Pages (screen and component count per route) |
 | `/` | Search |
 | `F` | Fit the whole graph |
 | Drag / pinch or Ctrl+wheel | Pan / zoom |
 | `Esc` | Clear selection and filters |
+
+Projects with more than 150 components open grouped by directory, with shared parts hidden and the Pages tab selected, because drawing everything at once is unreadable at that size. Colors follow directories (atoms / molecules / organisms, …). The legend starts folded so it doesn't cover nodes.
 
 The "日本語" / "English" button switches the language, and the choice is remembered. Light and dark mode follow your OS setting.
 

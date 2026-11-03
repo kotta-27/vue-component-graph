@@ -133,6 +133,9 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
   color: var(--text-secondary);
 }
 .focus-bar strong { color: var(--text-primary); }
+.focus-bar button[disabled] { opacity: 0.4; cursor: default; }
+.focus-bar { flex-wrap: wrap; }
+.focus-bar .chip { font-size: 11.5px; padding: 1px 8px; }
 
 /* ---------- canvas ---------- */
 main { flex: 1; display: flex; min-height: 0; position: relative; }
@@ -154,6 +157,10 @@ main { flex: 1; display: flex; min-height: 0; position: relative; }
 .node.match .box { stroke: var(--accent); stroke-width: 2; stroke-dasharray: none; }
 .impact-on .node.changed .box { stroke: var(--accent); stroke-width: 2.5; stroke-dasharray: none; }
 .impact-on .node.affected .box { stroke: var(--accent); stroke-width: 1.5; stroke-dasharray: 4 2.5; }
+.node.group .box { fill: var(--page); stroke-width: 1.5; }
+.node.group text { font-weight: 600; }
+.node .shared-pill { fill: var(--wash); stroke: var(--border); }
+.node .shared-count { fill: var(--text-secondary); font-size: 10.5px; font-weight: 500; text-anchor: middle; }
 .node .warn { fill: var(--warning); }
 .node .warn-mark { fill: #0b0b0b; font-size: 10px; font-weight: 700; text-anchor: middle; }
 
@@ -206,6 +213,8 @@ main { flex: 1; display: flex; min-height: 0; position: relative; }
 .legend .swatch { width: 10px; height: 10px; border-radius: 2px; flex: none; }
 .legend svg { flex: none; }
 .legend .sep { height: 1px; background: var(--grid); margin: 3px 0; }
+.legend .legend-toggle { all: unset; cursor: pointer; color: var(--text-secondary); font-size: 11.5px; }
+.legend .legend-pill { font-size: 10px; padding: 0 5px; border-radius: 8px; background: var(--wash); border: 1px solid var(--border); color: var(--text-secondary); flex: none; }
 
 /* ---------- side panel ---------- */
 .side {
@@ -277,6 +286,11 @@ table.list td { padding: 3px 4px; border-bottom: 1px solid var(--grid); }
 table.list tr.row { cursor: pointer; }
 table.list tr.row:hover td { background: var(--wash); }
 table.list td.name { word-break: break-all; }
+/* ページ表：パスを優先して幅を取り、画面名は省略する */
+table.list.pages td:nth-child(2) { max-width: 110px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+table.list.pages td.name { word-break: normal; overflow-wrap: anywhere; }
+.side details.note summary { cursor: pointer; }
+.legend .row.note { color: var(--text-muted); font-size: 11px; }
 table.list td.name .dot { display: inline-block; margin-right: 6px; }
 
 .warnings li { color: var(--text-secondary); font-size: 12px; word-break: break-all; display: block; }
@@ -293,4 +307,6 @@ table.list td.name .dot { display: inline-block; margin-right: 6px; }
 .side .note { color: var(--text-secondary); font-size: 12px; margin: 4px 0 8px; }
 .side code { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 11.5px; }
 table.list tr.impacted td { background: var(--wash); }
+table.list tr.active td { background: var(--wash); font-weight: 600; }
+table.list tr.active td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
 table.list tr.impacted td.name { box-shadow: inset 3px 0 0 var(--accent); }

@@ -18,6 +18,23 @@
       optModules: 'JS/TS モジュール',
       optModulesTitle: 'main.ts や router.ts など .vue を import している JS/TS',
       fit: '全体表示',
+      legend: '凡例',
+      optShared: 'よく使う部品を隠す',
+      optSharedTitle: (n) => `${n} 個以上のコンポーネントから使われる部品（ボタンなど）を描かず、使う側に数だけ出す`,
+      optGroups: 'ディレクトリでまとめる',
+      optGroupsTitle: 'ディレクトリごとに 1 つの箱にまとめる。箱をクリックすると開く',
+      sharedHidden: (names) => `隠した共通部品: ${names}`,
+      groupTooltip: (n) => `${n} 個のコンポーネント。クリックで開く`,
+      legendGroup: 'ディレクトリ（数字は部品数）',
+      legendShared: (n) => `隠した共通部品の数（${n} か所以上で使われるもの）`,
+      scopeAround: (name, d) => `<strong>${name}</strong> の周辺（${d} 段）を表示中`,
+      scopePage: (path, n, hidden) => `ページ <strong>${path}</strong> の部品を表示中（${n}${hidden ? `、ほかに共通部品 ${hidden}` : ''}）`,
+      scopeGroups: 'ディレクトリ単位で表示中（箱をクリックで開く・部品をクリックでその周辺）',
+      closeAll: 'すべて閉じる',
+      depthLess: '段数を減らす',
+      depthMore: '段数を増やす',
+      aroundBtn: '周辺だけ表示',
+      pagesHint: 'ページを選ぶと、そのページの部品だけを表示します',
       fitTitle: '全体を表示（F）',
       canvas: 'コンポーネント依存グラフ',
       metaParents: (n) => `親 ${n}`,
@@ -83,6 +100,7 @@
       unsupportedPages: (dir) =>
         `${dir}/ はファイルベースルーティング（vue-router の Vite プラグイン、vite-plugin-pages など）と思われますが、まだ対応していません。ページのコンポーネント自体は解析しています`,
       sharedByAll: (names) => `全ページ共通：${names.join('、')}`,
+      sharedByAllCount: (n) => `全ページ共通の部品（${n}）`,
       colPath: 'パス',
       colScreen: '画面',
       colParts: '部品',
@@ -106,6 +124,23 @@
       optModules: 'JS/TS modules',
       optModulesTitle: 'JS/TS files that import .vue files, such as main.ts and router.ts',
       fit: 'Fit',
+      legend: 'Legend',
+      optShared: 'Hide shared parts',
+      optSharedTitle: (n) => `Components used by ${n}+ components (buttons, …) are not drawn; their users show a count instead`,
+      optGroups: 'Group by directory',
+      optGroupsTitle: 'Collapse each directory into one box. Click a box to open it',
+      sharedHidden: (names) => `Hidden shared parts: ${names}`,
+      groupTooltip: (n) => `${n} components. Click to open`,
+      legendGroup: 'Directory (number of components)',
+      legendShared: (n) => `Hidden shared parts (used in ${n}+ places)`,
+      scopeAround: (name, d) => `Showing ${d} step${d > 1 ? 's' : ''} around <strong>${name}</strong>`,
+      scopePage: (path, n, hidden) => `Showing the parts of page <strong>${path}</strong> (${n}${hidden ? `, plus ${hidden} shared` : ''})`,
+      scopeGroups: 'Grouped by directory (click a box to open it, a component to see its neighborhood)',
+      closeAll: 'Close all',
+      depthLess: 'Fewer steps',
+      depthMore: 'More steps',
+      aroundBtn: 'Show neighborhood',
+      pagesHint: 'Pick a page to see only its components',
       fitTitle: 'Fit the whole graph (F)',
       canvas: 'Component dependency graph',
       metaParents: (n) => `${n} ${n === 1 ? 'parent' : 'parents'}`,
@@ -172,6 +207,7 @@
       unsupportedPages: (dir) =>
         `${dir}/ looks like file-based routing (vue-router's Vite plugin, vite-plugin-pages, …), which isn't supported yet. The page components themselves are still analyzed`,
       sharedByAll: (names) => `On every page: ${names.join(', ')}`,
+      sharedByAllCount: (n) => `Components on every page (${n})`,
       colPath: 'Path',
       colScreen: 'Screen',
       colParts: 'Parts',
@@ -206,6 +242,7 @@
   const GAP_X = 80
   const GAP_Y = 10
   const DUMMY_GAP = 6
+  const SHARED_GAP = 8
 
   // ---------- 全体グラフの索引（フィルタに依存しない） ----------
   const nodeById = new Map(DATA.nodes.map((n) => [n.id, n]))
@@ -224,23 +261,71 @@
     parentsOf.get(e.to).push(e)
   }
 
-  // グループ色は全体の件数順で固定する（絞り込んでも塗り直さない）
-  const groupCounts = new Map()
-  for (const n of DATA.nodes) {
-    if (n.kind === 'component') groupCounts.set(n.group, (groupCounts.get(n.group) || 0) + 1)
-  }
-  const groupOrder = [...groupCounts.keys()].sort(
-    (a, b) => groupCounts.get(b) - groupCounts.get(a) || a.localeCompare(b),
+  // ---------- 大きなグラフ向けの準備 ----------
+  const componentCount = DATA.nodes.filter((n) => n.kind === 'component').length
+  /** これより多いと、最初はディレクトリ単位で見せ、よく使う部品を隠す */
+  const LARGE = 150
+  const large = componentCount > LARGE
+  /** この数以上のコンポーネントから使われる部品は「共通部品」（ボタンなど）として隠せる */
+  const SHARED_MIN = Math.max(8, Math.round(componentCount * 0.02))
+  const componentUsers = (id) => new Set(parentsOf.get(id).filter((e) => nodeById.get(e.from).kind === 'component').map((e) => e.from))
+  const sharedSet = new Set(
+    DATA.nodes.filter((n) => n.kind === 'component' && !n.entry && componentUsers(n.id).size >= SHARED_MIN).map((n) => n.id),
   )
-  const groupColor = new Map(groupOrder.slice(0, 8).map((g, i) => [g, `var(--series-${i + 1})`]))
-  const colorOf = (n) =>
-    n.kind === 'component' ? groupColor.get(n.group) || 'var(--text-muted)' : 'var(--text-muted)'
 
+  /**
+   * ディレクトリのまとめ方を決める。共通の親ディレクトリを除いた 1 段目でまとめ、
+   * 4 割以上を占めるまとまり（src/components など）はもう 1 段細かく分ける
+   */
+  const ROOT_CLUSTER = '/'
+  const clusterOf = (() => {
+    const ids = DATA.nodes.filter((n) => n.kind !== 'external').map((n) => n.id)
+    const dirs = ids.map((id) => id.split('/').slice(0, -1))
+    let common = 0
+    while (dirs.every((d) => d.length > common && d[common] === dirs[0][common])) common++
+    const keyOf = new Map(ids.map((id, i) => [id, dirs[i].slice(common, common + 1).join('/') || ROOT_CLUSTER]))
+    const depthOf = new Map([...new Set(keyOf.values())].map((k) => [k, 1]))
+    for (let round = 0; round < 3; round++) {
+      const counts = new Map()
+      for (const k of keyOf.values()) counts.set(k, (counts.get(k) || 0) + 1)
+      const [big, size] = [...counts].sort((a, b) => b[1] - a[1])[0] || []
+      if (!big || size < ids.length * 0.4 || big === ROOT_CLUSTER) break
+      const depth = depthOf.get(big) + 1
+      const next = new Map()
+      ids.forEach((id, i) => {
+        if (keyOf.get(id) !== big) return
+        next.set(id, dirs[i].slice(common, common + depth).join('/') || big)
+      })
+      if (new Set(next.values()).size < 2) break
+      for (const [id, k] of next) {
+        keyOf.set(id, k)
+        depthOf.set(k, depth)
+      }
+    }
+    return keyOf
+  })()
+  // 色はディレクトリのまとまり（atoms / molecules / pages など）で塗る。部品の多い順に 8 色、残りは灰色
+  const clusterSize = new Map()
+  for (const n of DATA.nodes) if (n.kind === 'component') clusterSize.set(clusterOf.get(n.id), (clusterSize.get(clusterOf.get(n.id)) || 0) + 1)
+  const clusterOrder = [...clusterSize.keys()].sort((a, b) => clusterSize.get(b) - clusterSize.get(a) || a.localeCompare(b))
+  const clusterColor = new Map(clusterOrder.slice(0, 8).map((k, i) => [k, `var(--series-${i + 1})`]))
+  const colorOfCluster = (k) => clusterColor.get(k) || 'var(--text-muted)'
+  const colorOf = (n) => (n.kind === 'component' ? colorOfCluster(clusterOf.get(n.id)) : 'var(--text-muted)')
+
+  const defaultScope = () => (large ? { kind: 'groups' } : { kind: 'all' })
   const state = {
     showScript: true,
     showModules: true,
     showImpact: !!IMPACT,
-    focus: null, // { id, dir: 'down' | 'up' }
+    /** 共通部品を線で描かず、使う側に数だけ出す */
+    hideShared: large,
+    legendOpen: !large,
+    /**
+     * 表示する範囲：all（全体）、groups（ディレクトリ単位。expanded は開いた箱）、page（1 ページの部品）、
+     * around（選んだ部品の周辺 depth 段）、focus（配下 / 使っている側）
+     */
+    scope: defaultScope(),
+    expanded: new Set(),
     selected: null,
     hover: null,
     query: '',
@@ -249,7 +334,7 @@
     view: { x: 0, y: 0, k: 1 },
   }
 
-  let current = { nodes: [], edges: [], pos: new Map() }
+  let current = { nodes: [], edges: [], pos: new Map(), members: new Set(), hiddenShared: new Map() }
 
   // ---------- 表示対象の計算 ----------
   function reach(start, edges, dir) {
@@ -269,19 +354,94 @@
     return keep
   }
 
+  /** start から depth 段以内（上下両方向）の部品 */
+  function around(start, edges, depth) {
+    const keep = new Set([start])
+    let frontier = [start]
+    for (let d = 0; d < depth; d++) {
+      const next = []
+      for (const e of edges) {
+        for (const [a, b] of [[e.from, e.to], [e.to, e.from]]) {
+          if (frontier.includes(a) && !keep.has(b)) {
+            keep.add(b)
+            next.push(b)
+          }
+        }
+      }
+      frontier = next
+    }
+    return keep
+  }
+
+  /** 範囲・共通部品・ディレクトリのまとめを反映した、描画するノードと辺 */
   function visibleGraph() {
     let nodes = DATA.nodes.filter((n) => state.showModules || n.kind !== 'module')
     const ids = new Set(nodes.map((n) => n.id))
     let edges = DATA.edges.filter(
       (e) => ids.has(e.from) && ids.has(e.to) && (state.showScript || e.type === 'template'),
     )
-    if (state.focus && !ids.has(state.focus.id)) state.focus = null
-    if (state.focus) {
-      const keep = reach(state.focus.id, edges, state.focus.dir)
+    const sc = state.scope
+    if ((sc.kind === 'focus' || sc.kind === 'around') && !ids.has(sc.id)) state.scope = defaultScope()
+    // 範囲で絞る。範囲の中心になる部品は、共通部品でも隠さない
+    const pinned = new Set([state.selected, ...changedSet])
+    if (sc.kind === 'focus') {
+      const keep = reach(sc.id, edges, sc.dir)
       nodes = nodes.filter((n) => keep.has(n.id))
-      edges = edges.filter((e) => keep.has(e.from) && keep.has(e.to))
+      pinned.add(sc.id)
+    } else if (sc.kind === 'around') {
+      const keep = around(sc.id, edges, sc.depth)
+      nodes = nodes.filter((n) => keep.has(n.id))
+      pinned.add(sc.id)
+    } else if (sc.kind === 'page') {
+      const r = DATA.routes[sc.route]
+      nodes = nodes.filter((n) => n.kind === 'component' && n.routes.includes(sc.route))
+      for (const id of r.chain) pinned.add(id)
     }
-    return { nodes, edges }
+    // 共通部品を隠し、使う側に「隠した数」を持たせる
+    const hiddenShared = new Map()
+    if (state.hideShared) {
+      const hidden = new Set(nodes.filter((n) => sharedSet.has(n.id) && !pinned.has(n.id)).map((n) => n.id))
+      if (hidden.size < nodes.length) {
+        nodes = nodes.filter((n) => !hidden.has(n.id))
+        for (const e of edges) {
+          if (hidden.has(e.to) && !hidden.has(e.from)) hiddenShared.set(e.from, [...(hiddenShared.get(e.from) || []), e.to])
+        }
+      }
+    }
+    const kept = new Set(nodes.map((n) => n.id))
+    edges = edges.filter((e) => kept.has(e.from) && kept.has(e.to))
+    const members = new Set(kept)
+    if (state.scope.kind !== 'groups') return { nodes, edges, members, hiddenShared }
+
+    // ディレクトリ単位：開いていない箱は 1 つのノードにまとめ、箱をまたぐ辺は本数を数える
+    const boxOf = (id) => {
+      const k = clusterOf.get(id)
+      return k !== undefined && !state.expanded.has(k) ? `group:${k}` : id
+    }
+    const boxes = new Map()
+    for (const n of nodes) {
+      const b = boxOf(n.id)
+      if (b === n.id) continue
+      const key = b.slice('group:'.length)
+      if (!boxes.has(b)) boxes.set(b, { id: b, kind: 'group', key, label: key, name: key, members: [], routes: [], externals: [] })
+      boxes.get(b).members.push(n.id)
+    }
+    for (const box of boxes.values()) box.label = `${box.key}  ${box.members.length}`
+    const merged = new Map()
+    for (const e of edges) {
+      const from = boxOf(e.from)
+      const to = boxOf(e.to)
+      if (from === to && from.startsWith('group:')) continue
+      const key = `${from}\0${to}`
+      const prev = merged.get(key)
+      if (prev) {
+        prev.count++
+        if (e.type === 'template') prev.type = 'template'
+        prev.async &&= e.async
+      } else merged.set(key, { from, to, type: e.type, async: e.async, count: 1 })
+    }
+    nodes = [...nodes.filter((n) => boxOf(n.id) === n.id), ...boxes.values()]
+    return { nodes, edges: [...merged.values()], members, hiddenShared }
   }
 
   // ---------- 階層レイアウト（左 → 右） ----------
@@ -296,6 +456,8 @@
   function nodeWidth(n) {
     let w = BAR_W + PAD_X * 2 + textWidth(n.label, n.kind === 'module')
     if (orphanSet.has(n.id)) w += WARN_W
+    const shared = current.hiddenShared.get(n.id)
+    if (shared) w += SHARED_GAP + textWidth(`+${shared.length}`) + 10
     return Math.ceil(w)
   }
 
@@ -307,9 +469,10 @@
     // 1. DFS で後退辺を見つけ、向きを反転して DAG にする
     const indeg = new Map(ids.map((id) => [id, 0]))
     for (const e of edges) if (e.from !== e.to) indeg.set(e.to, indeg.get(e.to) + 1)
+    const kindOf = new Map(nodes.map((n) => [n.id, n.kind]))
     const starts = [...ids].sort((a, b) => {
-      const ka = nodeById.get(a).kind === 'module' ? 0 : indeg.get(a) === 0 ? 1 : 2
-      const kb = nodeById.get(b).kind === 'module' ? 0 : indeg.get(b) === 0 ? 1 : 2
+      const ka = kindOf.get(a) === 'module' ? 0 : indeg.get(a) === 0 ? 1 : 2
+      const kb = kindOf.get(b) === 'module' ? 0 : indeg.get(b) === 0 ? 1 : 2
       return ka - kb
     })
     const mark = new Map()
@@ -493,9 +656,10 @@
   }
 
   function render(fit) {
-    const { nodes, edges } = visibleGraph()
+    const { nodes, edges, members, hiddenShared } = visibleGraph()
+    current = { nodes, edges, pos: new Map(), members, hiddenShared }
     const { pos, paths } = layout(nodes, edges)
-    current = { nodes, edges, pos }
+    current.pos = pos
     gEdges.textContent = ''
     gNodes.textContent = ''
 
@@ -504,6 +668,8 @@
       const cyc = e.from !== e.to && cycleOf.has(e.from) && cycleOf.get(e.from) === cycleOf.get(e.to)
       const cls = ['edge', e.type === 'script' ? 'script' : '', e.async ? 'async' : '', cyc ? 'cycle' : '']
       const path = el('path', { d: p.d, class: cls.filter(Boolean).join(' ') }, gEdges)
+      // ディレクトリをまたぐ辺は本数に応じて太くする
+      if (e.count > 1) path.style.strokeWidth = String(Math.min(6, 1.25 + Math.log2(e.count)))
       path.dataset.from = e.from
       path.dataset.to = e.to
       path.dataset.cycle = cyc ? '1' : ''
@@ -518,11 +684,22 @@
       if (changedSet.has(n.id)) g.classList.add('changed')
       else if (affectedSet.has(n.id)) g.classList.add('affected')
       el('rect', { class: 'box', width: p.w, height: NODE_H, rx: 6 }, g)
-      if (n.kind === 'component') {
-        el('rect', { class: 'bar', x: 0.5, y: 0.5, width: BAR_W, height: NODE_H - 1, rx: 2, fill: colorOf(n) }, g)
+      if (n.kind === 'component' || n.kind === 'group') {
+        const fill = n.kind === 'group' ? colorOfCluster(n.key) : colorOf(n)
+        el('rect', { class: 'bar', x: 0.5, y: 0.5, width: BAR_W, height: NODE_H - 1, rx: 2, fill }, g)
       }
       const t = el('text', { x: BAR_W + PAD_X, y: NODE_H / 2 }, g)
       t.textContent = n.label
+      // 隠した共通部品の数
+      const shared = hiddenShared.get(n.id)
+      if (shared) {
+        const label = `+${shared.length}`
+        const w = textWidth(label) + 10
+        const x = p.w - PAD_X - w + 4 - (orphanSet.has(n.id) ? WARN_W : 0)
+        el('rect', { class: 'shared-pill', x, y: NODE_H / 2 - 8, width: w, height: 16, rx: 8 }, g)
+        const st = el('text', { class: 'shared-count', x: x + w / 2, y: NODE_H / 2 + 0.5 }, g)
+        st.textContent = label
+      }
       if (orphanSet.has(n.id)) {
         const cx = p.w - PAD_X - 6
         el('circle', { class: 'warn', cx, cy: NODE_H / 2, r: 6.5 }, g)
@@ -557,11 +734,13 @@
 
     svg.classList.toggle('impact-on', state.showImpact && !!IMPACT)
     svg.classList.toggle('dim', !!lit || !!(matches && matches.size))
+    const boxMembers = new Map(current.nodes.filter((n) => n.kind === 'group').map((n) => [n.id, n.members]))
     for (const g of gNodes.children) {
       const id = g.dataset.id
+      const match = !!matches && (matches.has(id) || (boxMembers.get(id) || []).some((m) => matches.has(m)))
       g.classList.toggle('selected', id === state.selected)
-      g.classList.toggle('match', !!matches && matches.has(id))
-      g.classList.toggle('lit', lit ? lit.nodes.has(id) : !!matches && matches.has(id))
+      g.classList.toggle('match', match)
+      g.classList.toggle('lit', lit ? lit.nodes.has(id) : match)
     }
     for (const p of gEdges.children) {
       const { from, to } = p.dataset
@@ -583,11 +762,14 @@
     const r = svg.getBoundingClientRect()
     if (!box.width || !r.width) return
     const pad = 40
-    const k = Math.min(1.25, (r.width - pad * 2) / box.width, (r.height - pad * 2) / box.height)
+    // 左下の凡例にノードが隠れないよう、その高さぶん下を空ける
+    const legend = $('legend').getBoundingClientRect()
+    const bottom = legend.height ? Math.max(pad, legend.height + 24) : pad
+    const k = Math.min(1.25, (r.width - pad * 2) / box.width, (r.height - pad - bottom) / box.height)
     state.view = {
       k,
       x: (r.width - box.width * k) / 2 - box.x * k,
-      y: (r.height - box.height * k) / 2 - box.y * k,
+      y: pad + (r.height - pad - bottom - box.height * k) / 2 - box.y * k,
     }
     applyView()
   }
@@ -661,7 +843,7 @@
     else hideTooltip()
   })
   svg.addEventListener('pointerup', () => {
-    if (drag && !drag.moved) select(drag.node ? drag.node.dataset.id : null)
+    if (drag && !drag.moved) clickNode(drag.node ? drag.node.dataset.id : null)
     drag = null
     svg.classList.remove('panning')
   })
@@ -673,16 +855,38 @@
   })
   window.addEventListener('resize', () => applyView())
 
+  /** 箱は開く。大きなグラフで全体・箱の一覧を見ているときは、選んだ部品の周辺に切り替えて寄せる */
+  function clickNode(id) {
+    if (id && id.startsWith('group:')) {
+      state.expanded.add(id.slice('group:'.length))
+      render(false)
+      return
+    }
+    if (id && large && (state.scope.kind === 'groups' || state.scope.kind === 'all')) {
+      state.selected = id
+      setScope({ kind: 'around', id, depth: 1 })
+      return
+    }
+    select(id, !!id)
+  }
+
   // ---------- ツールチップ ----------
   const tooltip = $('tooltip')
   function showTooltip(id, e) {
-    const n = nodeById.get(id)
-    const meta = [t('metaParents', parentsOf.get(id).length), t('metaChildren', childrenOf.get(id).length)]
-    if (n.lines) meta.push(t('metaLines', n.lines))
-    tooltip.innerHTML =
-      `<div class="t-name">${esc(n.label)}</div><div class="t-path">${esc(n.id)}</div>` +
-      `<div class="t-meta">${meta.join(' · ')}</div>` +
-      statusHtml(id)
+    const box = current.nodes.find((n) => n.id === id && n.kind === 'group')
+    if (box) {
+      tooltip.innerHTML = `<div class="t-name">${esc(box.key)}</div><div class="t-meta">${t('groupTooltip', box.members.length)}</div>`
+    } else {
+      const n = nodeById.get(id)
+      const meta = [t('metaParents', parentsOf.get(id).length), t('metaChildren', childrenOf.get(id).length)]
+      if (n.lines) meta.push(t('metaLines', n.lines))
+      const shared = current.hiddenShared.get(id)
+      tooltip.innerHTML =
+        `<div class="t-name">${esc(n.label)}</div><div class="t-path">${esc(n.id)}</div>` +
+        `<div class="t-meta">${meta.join(' · ')}</div>` +
+        (shared ? `<div class="t-meta">${esc(t('sharedHidden', shared.map((x) => nodeById.get(x).label).join(', ')))}</div>` : '') +
+        statusHtml(id)
+    }
     tooltip.hidden = false
     const main = svg.parentElement.getBoundingClientRect()
     const x = e.clientX - main.left + 14
@@ -697,18 +901,27 @@
 
   // ---------- 凡例 ----------
   function renderLegend(nodes) {
-    const groups = new Set(nodes.filter((n) => n.kind === 'component').map((n) => n.group))
-    const rows = groupOrder
-      .filter((g) => groups.has(g))
+    // 色の凡例は、いま見えているディレクトリのまとまりだけ
+    const groups = new Set(nodes.map((n) => (n.kind === 'group' ? n.key : n.kind === 'component' ? clusterOf.get(n.id) : null)))
+    const rows = clusterOrder
       .slice(0, 8)
-      .map((g) => `<div class="row"><span class="swatch" style="background:${groupColor.get(g)}"></span>${esc(g)}</div>`)
-    if (groupOrder.length > 8 && groupOrder.slice(8).some((g) => groups.has(g))) {
+      .filter((k) => groups.has(k))
+      .map((k) => `<div class="row"><span class="swatch" style="background:${colorOfCluster(k)}"></span>${esc(k)}</div>`)
+    if (clusterOrder.length > 8 && clusterOrder.slice(8).some((k) => groups.has(k))) {
       rows.push(`<div class="row"><span class="swatch" style="background:var(--text-muted)"></span>${t('other')}</div>`)
     }
     const line = (cls, label) =>
       `<div class="row"><svg width="28" height="10"><path d="M1,5 L27,5" class="edge ${cls}"></path></svg>${label}</div>`
+    const extra =
+      (nodes.some((n) => n.kind === 'group') ? `<div class="row note">${t('legendGroup')}</div>` : '') +
+      (current.hiddenShared.size ? `<div class="row"><span class="legend-pill">+N</span>${t('legendShared', SHARED_MIN)}</div>` : '')
+    // 大きなグラフでは最初は畳んでおく（ノードに重ならないように）
+    const toggle = `<button type="button" class="legend-toggle" data-legend>${state.legendOpen ? '▾' : '▸'} ${t('legend')}</button>`
+    if (!state.legendOpen) return void ($('legend').innerHTML = toggle)
     $('legend').innerHTML =
+      toggle +
       rows.join('') +
+      extra +
       '<div class="sep"></div>' +
       line('', t('edgeTemplate')) +
       line('script', t('edgeScript')) +
@@ -724,13 +937,39 @@
 
   function renderFocusBar(nodes) {
     const bar = $('focus-bar')
-    if (!state.focus) {
+    const sc = state.scope
+    const text = scopeText()
+    if (!text) {
       bar.hidden = true
       return
     }
-    const n = nodeById.get(state.focus.id)
     bar.hidden = false
-    bar.innerHTML = `<span>${t('focusBar', esc(n.label), state.focus.dir)}</span><button type="button" data-unfocus>${t('showAll')}</button>`
+    let h = `<span>${text}</span>`
+    if (sc.kind === 'around') {
+      h += `<button type="button" data-depth="-1" title="${t('depthLess')}" ${sc.depth <= 1 ? 'disabled' : ''}>−</button>`
+      h += `<button type="button" data-depth="1" title="${t('depthMore')}" ${sc.depth >= 4 ? 'disabled' : ''}>+</button>`
+    }
+    if (sc.kind === 'groups' && state.expanded.size) {
+      for (const k of [...state.expanded].sort()) h += `<button type="button" class="chip" data-collapse="${esc(k)}">${esc(k)} ×</button>`
+      h += `<button type="button" data-collapse-all>${t('closeAll')}</button>`
+    }
+    // 大きなグラフでは「全体」は全部を並べた図ではなく、ディレクトリ単位の一覧
+    if (sc.kind !== defaultScope().kind) h += `<button type="button" data-unfocus>${t('showAll')}</button>`
+    bar.innerHTML = h
+  }
+
+  /** 今の表示範囲の説明（HTML）。全体表示なら空 */
+  function scopeText() {
+    const sc = state.scope
+    const label = (id) => esc(nodeById.get(id).label)
+    if (sc.kind === 'focus') return t('focusBar', label(sc.id), sc.dir)
+    if (sc.kind === 'around') return t('scopeAround', label(sc.id), sc.depth)
+    if (sc.kind === 'page') {
+      const hidden = new Set([...current.hiddenShared.values()].flat())
+      return t('scopePage', esc(DATA.routes[sc.route].path), current.members.size, hidden.size)
+    }
+    if (sc.kind === 'groups') return t('scopeGroups')
+    return ''
   }
 
   // ---------- サイドパネル ----------
@@ -775,13 +1014,16 @@
 
   /** 表示中の範囲（絞り込み・表示切り替えを反映） */
   function scope() {
-    const ids = new Set(current.nodes.map((n) => n.id))
+    // 箱にまとめたものや、隠した共通部品も「表示中の範囲」に含めて数える
+    const ids = new Set(current.members)
+    for (const shared of current.hiddenShared.values()) for (const id of shared) ids.add(id)
     const realEdges = (edges) => edges.filter((e) => e.from !== e.to)
+    const nodes = DATA.nodes.filter((n) => ids.has(n.id))
     return {
       ids,
-      nodes: current.nodes,
-      components: current.nodes.filter((n) => n.kind === 'component'),
-      edges: realEdges(current.edges),
+      nodes,
+      components: nodes.filter((n) => n.kind === 'component'),
+      edges: realEdges(DATA.edges.filter((e) => ids.has(e.from) && ids.has(e.to))),
       orphans: DATA.orphans.filter((id) => ids.has(id)),
       cycles: DATA.cycles.filter((c) => c.every((id) => ids.has(id))),
       recursive: DATA.recursive.filter((id) => ids.has(id)),
@@ -802,10 +1044,7 @@
     }
     let h = DATA.workspacePackages ? `<p class="note">${esc(t('monorepoRoot', DATA.workspacePackages.join(', ')))}</p>` : ''
     h += impactHtml()
-    if (state.focus) {
-      const n = nodeById.get(state.focus.id)
-      h += `<p class="scope">${t('scopeFocus', esc(n.label), state.focus.dir)}</p>`
-    }
+    if (scopeText() && state.scope.kind !== 'groups') h += `<p class="scope">${scopeText()}</p>`
     h += '<div class="kpis">'
     h += kpi(sc.components.length, sc.total.components, t('kpiComponents'))
     h += kpi(sc.edges.length, sc.total.edges, t('kpiEdges'))
@@ -895,7 +1134,7 @@
     h += `<h2 style="margin-top:12px">${esc(n.label)}</h2><div class="path">${esc(n.id)}</div>`
     h += statusHtml(id)
     const meta = []
-    if (n.kind === 'component') meta.push(t('group', esc(n.group)))
+    if (n.kind === 'component') meta.push(t('group', esc(clusterOf.get(n.id) ?? n.group)))
     else meta.push(n.kind === 'module' ? t('kindModule') : t('kindExternal'))
     if (n.lines) meta.push(t('metaLines', n.lines))
     h += `<div class="path" style="margin-top:6px;color:var(--text-secondary)">${meta.join(' · ')}</div>`
@@ -903,6 +1142,7 @@
     h += '<div class="actions">'
     if (children.length) h += `<button type="button" data-focus="${esc(id)}" data-dir="down">${t('focusDown')}</button>`
     if (parents.length) h += `<button type="button" data-focus="${esc(id)}" data-dir="up">${t('focusUp')}</button>`
+    if (parents.length || children.length) h += `<button type="button" data-around="${esc(id)}">${t('aroundBtn')}</button>`
     if (n.kind !== 'external') h += `<a class="button" href="vscode://file${encodeURI(abs)}">${t('openVscode')}</a>`
     h += '</div>'
 
@@ -938,7 +1178,7 @@
   function routeItem(i) {
     const r = DATA.routes[i]
     const page = nodeById.get(r.view)
-    return `<li class="link route" data-select="${esc(page.id)}" title="${esc(r.chain.join(' > '))}"><span class="rpath">${routeLabel(r)}</span><span class="rcomp">${esc(page.label)}</span></li>`
+    return `<li class="link route" data-route="${i}" title="${esc(r.chain.join(' > '))}"><span class="rpath">${routeLabel(r)}</span><span class="rcomp">${esc(page.label)}</span></li>`
   }
 
   function shellNames() {
@@ -975,15 +1215,18 @@
     if (!DATA.routes.length) return `<p class="empty">${noRoutesText()}</p>`
     const counts = DATA.routes.map(() => 0)
     for (const n of DATA.nodes) if (n.kind === 'component') for (const i of n.routes) counts[i]++
-    let h = ''
+    let h = `<p class="note">${t('pagesHint')}</p>`
     const shell = shellNames()
-    if (shell.length) h += `<p class="note">${t('sharedByAll', shell.map(esc))}</p>`
-    h += `<table class="list"><thead><tr><th>${t('colPath')}</th><th>${t('colScreen')}</th><th class="num" title="${t('colPartsTitle')}">${t('colParts')}</th></tr></thead><tbody>`
+    if (shell.length > 8) {
+      h += `<details class="note"><summary>${t('sharedByAllCount', shell.length)}</summary>${esc(shell.join(', '))}</details>`
+    } else if (shell.length) h += `<p class="note">${t('sharedByAll', shell.map(esc))}</p>`
+    h += `<table class="list pages"><thead><tr><th>${t('colPath')}</th><th>${t('colScreen')}</th><th class="num" title="${t('colPartsTitle')}">${t('colParts')}</th></tr></thead><tbody>`
     DATA.routes.forEach((r, i) => {
       const page = nodeById.get(r.view)
       const hit = IMPACT && state.showImpact && IMPACT.routes.includes(i)
+      const active = state.scope.kind === 'page' && state.scope.route === i
       h +=
-        `<tr class="row${hit ? ' impacted' : ''}" data-select="${esc(page.id)}" title="${esc(r.chain.join(' > '))}">` +
+        `<tr class="row${hit ? ' impacted' : ''}${active ? ' active' : ''}" data-route="${i}" title="${esc(r.chain.join(' > '))}">` +
         `<td class="name">${routeLabel(r)}</td><td>${esc(page.label)}</td><td class="num">${counts[i]}</td></tr>`
     })
     return h + '</tbody></table>'
@@ -1009,24 +1252,34 @@
   function select(id, center) {
     state.selected = id
     if (id && !current.pos.has(id)) {
-      // 絞り込みで隠れているなら全体に戻す
-      state.focus = null
+      // 範囲の外（箱の中・隠した共通部品・絞り込みの外）なら、大きなグラフではその周辺、小さければ全体を出す
       if (nodeById.get(id).kind === 'module') state.showModules = $('opt-modules').checked = true
-      render(false)
+      state.scope = large ? { kind: 'around', id, depth: 1 } : { kind: 'all' }
+      render(true)
     }
     applyHighlight()
     renderSide()
     if (id && center) centerOn(id)
   }
 
+  function setScope(scope) {
+    state.scope = scope
+    render(true)
+  }
+
+  function openPage(i) {
+    state.selected = null
+    setScope({ kind: 'page', route: i })
+  }
+
   side.addEventListener('click', (e) => {
-    const t = e.target.closest('[data-select],[data-focus],[data-back],[data-tab],[data-sort]')
+    const t = e.target.closest('[data-select],[data-focus],[data-around],[data-route],[data-back],[data-tab],[data-sort]')
     if (!t) return
     if (t.dataset.select) select(t.dataset.select, true)
-    else if (t.dataset.focus) {
-      state.focus = { id: t.dataset.focus, dir: t.dataset.dir }
-      render(true)
-    } else if ('back' in t.dataset) select(null)
+    else if (t.dataset.route) openPage(Number(t.dataset.route))
+    else if (t.dataset.focus) setScope({ kind: 'focus', id: t.dataset.focus, dir: t.dataset.dir })
+    else if (t.dataset.around) setScope({ kind: 'around', id: t.dataset.around, depth: 1 })
+    else if ('back' in t.dataset) select(null)
     else if (t.dataset.tab) {
       state.tab = t.dataset.tab
       renderSide()
@@ -1038,9 +1291,17 @@
   })
 
   $('focus-bar').addEventListener('click', (e) => {
-    if (!e.target.closest('[data-unfocus]')) return
-    state.focus = null
-    render(true)
+    const b = e.target.closest('button')
+    if (!b) return
+    if ('unfocus' in b.dataset) setScope(defaultScope())
+    else if (b.dataset.depth) setScope({ ...state.scope, depth: Math.min(4, Math.max(1, state.scope.depth + Number(b.dataset.depth))) })
+    else if (b.dataset.collapse) {
+      state.expanded.delete(b.dataset.collapse)
+      render(false)
+    } else if ('collapseAll' in b.dataset) {
+      state.expanded.clear()
+      render(true)
+    }
   })
 
   // ---------- 検索 ----------
@@ -1127,6 +1388,18 @@
     render(true)
   })
   $('btn-fit').addEventListener('click', fitView)
+  $('legend').addEventListener('click', (e) => {
+    if (!e.target.closest('[data-legend]')) return
+    state.legendOpen = !state.legendOpen
+    renderLegend(current.nodes)
+  })
+  $('opt-shared').addEventListener('change', (e) => {
+    state.hideShared = e.target.checked
+    render(true)
+  })
+  $('opt-groups').addEventListener('change', (e) => {
+    setScope(e.target.checked ? { kind: 'groups' } : { kind: 'all' })
+  })
 
   /** template.html の固定文言（data-i18n*）を今の言語で埋める */
   function applyStaticText() {
@@ -1162,10 +1435,7 @@
     else if (e.key === '-') zoomAt(1 / 1.2, r.width / 2, r.height / 2)
     else if (e.key === 'Escape') {
       if (state.selected) select(null)
-      else if (state.focus) {
-        state.focus = null
-        render(true)
-      }
+      else if (state.scope.kind !== defaultScope().kind) setScope(defaultScope())
     }
   })
 
@@ -1173,7 +1443,12 @@
   // rtl で末尾側を見せつつ、パス自体は ltr のまま表示する
   $('root-path').textContent = '\u200e' + DATA.root + '\u200e'
   $('root-path').title = DATA.root
-  if (DATA.initialFocus) state.focus = DATA.initialFocus
+  if (DATA.initialFocus) state.scope = { kind: 'focus', ...DATA.initialFocus }
+  // 大きなグラフは、ページの一覧から入れるようにしておく
+  if (large && DATA.routes.length && !IMPACT) state.tab = 'pages'
+  $('opt-shared').checked = state.hideShared
+  $('opt-shared-wrap').title = t('optSharedTitle', SHARED_MIN)
+  $('opt-groups').checked = state.scope.kind === 'groups'
   applyStaticText()
   render(true)
 })()
