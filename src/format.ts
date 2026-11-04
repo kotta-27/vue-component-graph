@@ -43,17 +43,21 @@ export function routeLines(graph: Graph, indices: number[]): string[] {
 
 export function impactLines(graph: Graph, impact: Impact, label: string): string[] {
   const out = [t('impactTitle', label)]
-  if (!impact.changed.length) return [...out, `  ${t('impactNone')}`]
-  out.push(`  ${t('changedFiles', impact.changed.length)}`)
+  // 追えなかった変更・全体に効く変更があれば、「関係する変更なし」とは言い切らない
+  const notes = impact.unlinked.length ? [`  ${t('unlinked', impact.unlinked)}`] : []
+  if (!impact.changed.length && !impact.projectWide.length) return [...out, ...(notes.length ? notes : [`  ${t('impactNone')}`])]
+  out.push(`  ${t('changedFiles', impact.changed.length + impact.projectWide.length)}`)
   const deleted = new Set(impact.deleted)
   for (const id of impact.changed) out.push(`    ${id}${deleted.has(id) ? t('deletedMark') : ''}`)
+  for (const id of impact.projectWide) out.push(`    ${id}${t('projectWideMark')}`)
   // 変更したファイル自体は上に出ているので、影響を受ける側だけを数える（ビューアと同じ）
   const changed = new Set(impact.changed)
   const affected = impact.affected.filter((id) => !changed.has(id))
   out.push(`  ${t('affectedComponents', affected.length)}`)
-  if (affected.length) out.push(`    ${affected.map((id) => nameOf(graph, id)).join(', ')}`)
+  // 数百件になることがあるので、名前は先頭 40 件まで（件数は全体）
+  const names = affected.slice(0, 40).map((id) => nameOf(graph, id)).join(', ')
+  if (affected.length) out.push(`    ${names}${affected.length > 40 ? `, ${t('andMore', affected.length - 40)}` : ''}`)
   out.push(`  ${t('pagesToCheck', impact.routes.length)}${impact.everywhere ? t('everywhere') : ''}`)
   for (const line of routeLines(graph, impact.routes)) out.push(`    ${line}`)
-  if (impact.unlinked.length) out.push(`  ${t('unlinked', impact.unlinked)}`)
-  return out
+  return [...out, ...notes]
 }

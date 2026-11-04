@@ -12,6 +12,8 @@ export interface Impact {
   deleted: string[]
   /** 変更したのに、どのコンポーネント・ページにもつながらなかったファイル（解析で追えていない可能性がある） */
   unlinked: string[]
+  /** 依存関係・ビルド設定・index.html など、プロジェクト全体に効く変更（everywhere になる） */
+  projectWide: string[]
   /** 変更の影響を受けるコンポーネント（変更されたものを含む） */
   affected: string[]
   /** 確認すべきルート（Graph.routes の添字） */
@@ -52,13 +54,19 @@ export function gitChangedFiles(root: string, since: string): string[] {
     throw new Error(t('refNotFound', since, hints.join(', ')))
   }
   const lines = [
-    ...git('diff', '--name-only', base).split('\n'),
+    // --no-renames：リネームの旧パスも「削除」として出す（旧パスを import している側を拾うため）
+    ...git('diff', '--name-only', '--no-renames', base).split('\n'),
     ...git('-C', top, 'ls-files', '--others', '--exclude-standard').split('\n'),
   ]
   return [...new Set(lines.filter(Boolean).map((f) => resolve(top, f)))]
 }
 
 const ANALYZED_RE = /\.(vue|[cm]?[jt]sx?)$/
+/** 全ページに効くファイル：依存関係、ロックファイル、プロジェクト直下のビルド・スタイル設定、HTML のテンプレート、環境変数 */
+const PROJECT_WIDE_RE =
+  /^(package\.json|package-lock\.json|pnpm-lock\.yaml|yarn\.lock|bun\.lockb?|index\.html|app\.html|\.env(\..*)?|[\w.-]+\.config\.[cm]?[jt]s|tsconfig(\.[\w-]+)?\.json|app\.config\.[cm]?[jt]s)$/
+/** 解析の対象外にしているもの（テスト、Storybook など）。つながらなくても列挙しない */
+const IGNORED_RE = /(^|\/)(test|tests|__tests__|e2e|cypress|playwright|coverage|dist|build)\/|\.(test|spec|stories|story)\.[^.]+$/
 
 /**
  * 変更から、影響を受けるコンポーネントと確認すべきページを求める。
@@ -115,20 +123,24 @@ export function analyzeImpact(
     componentUsers.get(e.to)!.add(e.from)
   }
 
-  const known = (id: string) => deps.static.has(id) || staticUsers.has(id) || lazyUsers.has(id) || nodeById.has(id)
-  const assumed = new Set(hypothetical)
-  const deleted = changedFiles
-    .filter((f) => !assumed.has(f) && !existsSync(f))
-    .map(rel)
-    .filter((id) => !id.startsWith('..') && (ANALYZED_RE.test(id) || (graph.vitepress && id.endsWith('.md'))))
-  const changed = [...new Set([...changedFiles.map(rel).filter(known), ...deleted])]
-
   // 削除したファイルを、まだ import しているファイル（import は解決できなくなっている）
   const importersOfDeleted = (id: string): string[] => {
     const base = id.replace(/\.(vue|[cm]?[jt]sx?)$/, '')
     const keys = [base, ...(/\/index$/.test(base) ? [base.replace(/\/index$/, '')] : [])]
     return keys.flatMap((k) => [...(deps.missing.get(k) ?? [])])
   }
+  const inContent = (id: string) => deps.contentDirs.some((d) => id === d || id.startsWith(d + '/'))
+  const known = (id: string) =>
+    deps.static.has(id) || staticUsers.has(id) || lazyUsers.has(id) || nodeById.has(id) || inContent(id) || importersOfDeleted(id).length > 0
+  const assumed = new Set(hypothetical)
+  // 「これを消したら」と仮定したファイルも、まだ import している側があれば削除として扱う
+  const deleted = changedFiles
+    .filter((f) => !existsSync(f) && (!assumed.has(f) || importersOfDeleted(rel(f)).length > 0))
+    .map(rel)
+    .filter((id) => !id.startsWith('..') && (ANALYZED_RE.test(id) || (graph.vitepress && id.endsWith('.md'))))
+  const changed = [...new Set([...changedFiles.map(rel).filter(known), ...deleted])]
+  // 依存関係・ビルド設定・HTML のテンプレートなど、全ページに効くもの
+  const projectWide = changedFiles.map(rel).filter((id) => PROJECT_WIDE_RE.test(id)).sort()
 
   const usersOf = (id: string): string[] => {
     const out = new Set(componentUsers.get(id))
@@ -137,7 +149,10 @@ export function analyzeImpact(
       if (isComponent(id) && deps.hubs.has(u)) continue
       out.add(u)
     }
-    for (const u of lazyUsers.get(id) ?? []) if (isComponent(u)) out.add(u)
+    // 遅延 import：コンポーネントからなら描画される。モジュールからでも、読まれるのが部品でなければ（i18n の辞書など）伝える
+    for (const u of lazyUsers.get(id) ?? []) if (isComponent(u) || !isComponent(id)) out.add(u)
+    // Nuxt Content のファイルは、Content を描画・取得するコンポーネントに効く
+    if (inContent(id)) for (const u of deps.contentUsers) out.add(u)
     return [...out]
   }
 
@@ -157,7 +172,7 @@ export function analyzeImpact(
 
   const affected = [...seen].filter(isComponent).sort()
   const routes = new Set<number>()
-  let everywhere = graph.entries.some((id) => seen.has(id))
+  let everywhere = graph.entries.some((id) => seen.has(id)) || projectWide.length > 0
   for (const id of affected) {
     const n = nodeById.get(id)!
     if (n.shell) everywhere = true
@@ -174,10 +189,11 @@ export function analyzeImpact(
     const users = usersOf(id)
     return isComponent(id) || users.length > 0 || graph.entries.includes(id) || graph.routes.some((r) => r.source === id)
   }
-  const sourceLike = /\.(vue|[cm]?[jt]sx?|css|scss|sass|less|styl|pcss|svg|png|jpe?g|gif|webp|avif|woff2?|json)$/
+  const sourceLike = /\.(vue|[cm]?[jt]sx?|css|scss|sass|less|styl|pcss|svg|png|jpe?g|gif|webp|avif|woff2?|json|ya?ml|md|html)$/
   const unlinked = changedFiles
     .map(rel)
     .filter((id) => !id.startsWith('..') && sourceLike.test(id) && !deleted.includes(id) && existsSync(resolve(graph.root, id)))
+    .filter((id) => !projectWide.includes(id) && !IGNORED_RE.test(id))
     .filter((id) => !known(id) || !reachedFrom(id))
     .sort()
 
@@ -186,6 +202,7 @@ export function analyzeImpact(
     changed: changed.sort(),
     deleted: deleted.sort(),
     unlinked,
+    projectWide,
     affected,
     routes: [...routes].sort((a, b) => a - b),
     everywhere,

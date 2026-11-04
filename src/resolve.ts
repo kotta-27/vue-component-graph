@@ -1,5 +1,6 @@
-import { existsSync, readFileSync, statSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
+import { babelParse } from '@vue/compiler-sfc'
 
 // Vite・webpack と同じくスクリプトを先に試す（Foo/ に index.ts と index.vue があれば index.ts）
 const EXTS = ['.ts', '.tsx', '.js', '.jsx', '.mts', '.mjs', '.vue']
@@ -11,7 +12,11 @@ interface PathAlias {
   targets: string[]
 }
 
-export type Resolver = (spec: string, importer: string) => string | null
+export interface Resolver {
+  (spec: string, importer: string): string | null
+  /** ファイルが無くても、相対パスやエイリアスが指すはずのパス（削除したファイルを import している側を探すため） */
+  candidate(spec: string, importer: string): string | null
+}
 
 export function srcDirOf(root: string): string {
   for (const d of ['src', 'app']) {
@@ -25,14 +30,26 @@ export function createResolver(root: string): Resolver {
   const aliases = loadAliases(root)
   const cache = new Map<string, string | null>()
 
-  return (spec, importer) => {
+  const resolver = ((spec: string, importer: string) => {
     spec = spec.split('?')[0]
     const key = spec.startsWith('.') ? `${dirname(importer)}\0${spec}` : spec
     if (cache.has(key)) return cache.get(key)!
     const result = resolveUncached(spec, importer, aliases) ?? resolveFromProjectDirs(spec, root)
     cache.set(key, result)
     return result
+  }) as Resolver
+  resolver.candidate = (spec, importer) => {
+    spec = spec.split('?')[0]
+    if (spec.startsWith('.')) return resolve(dirname(importer), spec)
+    for (const a of aliases) {
+      if (!spec.startsWith(a.prefix) || !spec.endsWith(a.suffix)) continue
+      if (!a.wildcard && spec !== a.prefix) continue
+      const star = a.wildcard ? spec.slice(a.prefix.length, spec.length - a.suffix.length) : ''
+      if (a.targets[0]) return a.targets[0].replace('*', star)
+    }
+    return null
   }
+  return resolver
 }
 
 /**
@@ -87,6 +104,13 @@ function loadAliases(root: string): PathAlias[] {
   for (const name of ['tsconfig.json', 'jsconfig.json']) {
     collectTsconfigPaths(join(root, name), aliases, seen)
   }
+  // vite.config / vue.config / webpack の resolve.alias（tsconfig に無いものだけ足す）
+  for (const [key, target] of bundlerAliases(root)) {
+    const prefix = key.endsWith('/') ? key : `${key}/`
+    if (aliases.some((a) => a.prefix === prefix || a.prefix === key)) continue
+    aliases.push({ prefix, suffix: '', wildcard: true, targets: [join(target, '*')] })
+    aliases.push({ prefix: key.replace(/\/$/, ''), suffix: '', wildcard: false, targets: [target] })
+  }
   // Vite / Nuxt の慣習的エイリアス（tsconfig に無ければ補う）
   const src = srcDirOf(root)
   const fallback: [string, string][] = [
@@ -100,6 +124,100 @@ function loadAliases(root: string): PathAlias[] {
     aliases.push({ prefix, suffix: '', wildcard: true, targets: [join(dir, '*')] })
   }
   return aliases
+}
+
+const BUNDLER_CONFIG_RE = /^(vite|vue|webpack|quasar|rsbuild|rspack)([\w.-]*)\.(c|m)?[jt]s$/
+
+/**
+ * バンドラーの設定ファイルから、静的に読める alias を取り出す。
+ * `alias: { '@': path.resolve(__dirname, 'src') }`、`{ find: '@', replacement: fileURLToPath(new URL('./src', import.meta.url)) }`、
+ * webpack-chain の `.alias.set('@', resolve('src'))` に対応する（関数呼び出しで組み立てたものは読まない）
+ */
+export function bundlerAliases(root: string): [string, string][] {
+  const out: [string, string][] = []
+  const files: string[] = []
+  for (const dir of [root, join(root, 'config'), join(root, 'build')]) {
+    if (!isDir(dir)) continue
+    for (const name of readdirSync(dir)) if (BUNDLER_CONFIG_RE.test(name)) files.push(join(dir, name))
+  }
+  for (const file of files) {
+    let ast: any
+    try {
+      ast = babelParse(readFileSync(file, 'utf8'), { sourceType: 'module', plugins: ['typescript'], errorRecovery: true })
+    } catch {
+      continue
+    }
+    const dir = dirname(file)
+    const pathOf = (node: any): string | null => {
+      if (!node) return null
+      if (node.type === 'StringLiteral') return /^[./]/.test(node.value) ? resolve(dir, node.value) : null
+      if (node.type === 'TemplateLiteral' && !node.expressions.length) return pathOf({ type: 'StringLiteral', value: node.quasis[0].value.cooked })
+      if (node.type === 'CallExpression') {
+        const callee = node.callee.type === 'MemberExpression' ? node.callee.property.name : node.callee.name
+        // fileURLToPath(new URL('./src', import.meta.url))
+        if (callee === 'fileURLToPath') return pathOf(node.arguments[0])
+        if (callee === 'resolve' || callee === 'join') {
+          const parts: string[] = []
+          for (const a of node.arguments) {
+            if (a.type === 'Identifier' && a.name === '__dirname') parts.push(dir)
+            else if (a.type === 'StringLiteral') parts.push(a.value)
+            else if (a.type === 'CallExpression' && a.callee.property?.name === 'cwd') parts.push(root)
+            else return null
+          }
+          return parts.length ? resolve(callee === 'resolve' && !parts[0].startsWith('/') ? root : dir, ...parts) : null
+        }
+      }
+      if (node.type === 'NewExpression' && node.callee.name === 'URL') return pathOf(node.arguments[0])
+      if (node.type === 'MemberExpression' && node.property.name === 'pathname') return pathOf(node.object)
+      return null
+    }
+    walkAst(ast.program, (node) => {
+      const key = node.type === 'ObjectProperty' ? (node.key.name ?? node.key.value) : null
+      // alias: { ... } と、別の変数に書いて渡す形（export const aliases = { ... } → alias: aliases）
+      const aliasObject =
+        (key === 'alias' && node.value.type === 'ObjectExpression' && node.value) ||
+        (node.type === 'VariableDeclarator' && /alias/i.test(node.id?.name ?? '') && node.init?.type === 'ObjectExpression' && node.init)
+      if (aliasObject) {
+        for (const p of aliasObject.properties) {
+          const k = p.key?.type === 'Identifier' ? p.key.name : p.key?.type === 'StringLiteral' ? p.key.value : null
+          const target = pathOf(p.value)
+          if (k && target) out.push([k, target])
+        }
+      }
+      if (key === 'alias' && node.value.type === 'ArrayExpression') {
+        for (const el of node.value.elements) {
+          if (el?.type !== 'ObjectExpression') continue
+          const find = el.properties.find((p: any) => (p.key?.name ?? p.key?.value) === 'find')?.value
+          const replacement = el.properties.find((p: any) => (p.key?.name ?? p.key?.value) === 'replacement')?.value
+          const target = pathOf(replacement)
+          if (find?.type === 'StringLiteral' && target) out.push([find.value, target])
+        }
+      }
+      // config.resolve.alias.set('@', resolve('src'))
+      if (
+        node.type === 'CallExpression' &&
+        node.callee.type === 'MemberExpression' &&
+        node.callee.property.name === 'set' &&
+        node.arguments[0]?.type === 'StringLiteral' &&
+        /alias/.test(JSON.stringify(node.callee.object, ['type', 'name', 'property', 'object']))
+      ) {
+        const target = pathOf(node.arguments[1])
+        if (target) out.push([node.arguments[0].value, target])
+      }
+    })
+  }
+  return out
+}
+
+function walkAst(node: any, visit: (node: any) => void) {
+  if (!node || typeof node.type !== 'string') return
+  visit(node)
+  for (const key in node) {
+    if (key === 'loc' || key === 'start' || key === 'end' || key.endsWith('Comments')) continue
+    const child = node[key]
+    if (Array.isArray(child)) for (const c of child) walkAst(c, visit)
+    else if (child && typeof child === 'object') walkAst(child, visit)
+  }
 }
 
 function collectTsconfigPaths(file: string, out: PathAlias[], seen: Set<string>) {

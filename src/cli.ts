@@ -10,7 +10,7 @@ import { renderHtml } from './html'
 import { analyzeImpact, gitChangedFiles, type Impact } from './impact'
 import { startMcpServer } from './mcp'
 import { defaultOutPath } from './output'
-import { componentInfo, noRoutesReason, pick, projectNotes, QueryError, summaryLine, unresolvedLines, whoUses } from './report'
+import { caveats, componentInfo, noRoutesReason, pick, QueryError, routesReport, summaryLine, unresolvedLines, whoUses } from './report'
 import { checkProjectRoot } from './root'
 
 // ヘルプの文言も切り替えるので、コマンドを定義する前に決める
@@ -31,6 +31,7 @@ cli
   .option('--externals', t('optExternals'))
   .option('--json', t('optJson'))
   .option('--no-open', t('optNoOpen'))
+  .option('--routes', t('optRoutes'))
   .example('vue-component-graph')
   .example('vue-component-graph ./my-app --focus AppHeader')
   .example('vue-component-graph --who-uses BaseButton')
@@ -83,7 +84,8 @@ cli
     mkdirSync(dirname(out), { recursive: true })
     writeFileSync(out, renderHtml(full, { initialFocus, impact, lang: explicitLang() }))
     // 絞り込んだときはそのコンポーネントの結果、--since のときは影響だけを出す（未使用の一覧などは混ぜない）
-    console.log((report ?? (impact ? [summaryLine(graph), ...projectNotes(graph)] : summaryLines(graph))).join('\n'))
+    if (opts.routes) report = [...(report ?? []), ...routesReport(full)]
+    console.log((report ?? (impact ? [summaryLine(graph), ...caveats(graph)] : summaryLines(graph))).join('\n'))
     if (impact) console.log('\n' + impactLines(full, impact, t('diffFrom', impact.since)).join('\n'))
     console.log(`\n→ ${out}`)
     if (opts.open) openInBrowser(out)
@@ -126,7 +128,7 @@ function orFail<T>(fn: () => T): T {
 }
 
 function summaryLines(graph: Graph): string[] {
-  const lines = [summaryLine(graph), ...projectNotes(graph)]
+  const lines = [summaryLine(graph), ...caveats(graph)]
   if (!graph.routes.length) lines.push(noRoutesReason(graph))
   if (graph.orphans.length) lines.push('', `${t('unused')} (${graph.orphans.length})`, ...graph.orphans.map((id) => `  ${id}`))
   if (graph.cycles.length) {

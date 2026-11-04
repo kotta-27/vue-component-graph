@@ -13,6 +13,8 @@ export interface ImportBinding {
 
 export interface Registration {
   name: string
+  /** `app.component(Foo.name, Foo)`：名前はコンポーネントが宣言した name（graph で埋める） */
+  nameFromComponent?: boolean
   /** ローカル変数経由で登録された場合 */
   local?: string
   /** `defineAsyncComponent(() => import('...'))` を直接登録した場合 */
@@ -29,6 +31,10 @@ export interface ReExport {
 export interface RouteRef {
   local?: string
   source?: string
+  /** `() => import(\`./pages/${name}.vue\`)` のような、変数入りの import のパターン */
+  glob?: string
+  /** 式の中の文字列（`${mobile('Lead')}` の 'Lead'）。一致するファイルに絞る手がかり */
+  hints?: string[]
   /** 名前付きビューの名前。`component:` は 'default' */
   view: string
 }
@@ -41,6 +47,12 @@ export interface RawRoute {
   children: RawRoute[]
   /** `redirect` があり、それ自体は描画しない */
   redirect: boolean
+  /** `alias: '/x'` / `alias: ['/x', '/y']` */
+  aliases: string[]
+  /** component が関数呼び出し（`createListView('top')` など）で、画面を特定できない */
+  unknownView?: boolean
+  /** path が式のとき、文字列と定数名の連結として読めたもの（`${BASE}/x` など。graph で定数を埋める） */
+  pathParts?: ({ str: string } | { ident: string })[]
 }
 
 export interface FileInfo {
@@ -74,6 +86,19 @@ export interface FileInfo {
   aliases: Record<string, string>
   /** Nuxt のページの `definePageMeta({ layout })`。false はレイアウトなし */
   pageLayout?: string | false
+  /** `definePageMeta({ path, alias })` で上書きした URL */
+  pagePath?: string
+  pageAliases: string[]
+  /** `<NuxtLayout name="x">` のレイアウト名 */
+  layoutRefs: string[]
+  /** nuxt-og-image の `defineOgImage('Name')` / `defineOgImageComponent('Name')` */
+  ogImages: string[]
+  /** トップレベルの文字列定数（ルートの path を埋めるため） */
+  constants: Record<string, string>
+  /** script で呼んでいる関数名（自動 import の composable を辿るため） */
+  calls: string[]
+  /** `defineOptions({ name })` や `export default { name }` で宣言した名前 */
+  declaredName?: string
   /** template の src / href、CSS の @import / url() など、コード以外の参照（影響分析用） */
   assets: string[]
   errors: string[]
@@ -89,7 +114,7 @@ export function parseFile(file: string): FileInfo {
   const info: FileInfo = {
     file,
     kind: file.endsWith('.vue') ? 'component' : 'module',
-    lines: source.split('\n').length,
+    lines: source.split('\n').length - (source.endsWith('\n') ? 1 : 0),
     imports: [],
     bareImports: [],
     registered: [],
@@ -103,6 +128,11 @@ export function parseFile(file: string): FileInfo {
     globs: [],
     createsRouter: false,
     aliases: {},
+    pageAliases: [],
+    layoutRefs: [],
+    ogImages: [],
+    constants: {},
+    calls: [],
     assets: [],
     errors: [],
   }
@@ -150,6 +180,8 @@ function parseScript(code: string, lang: string, info: FileInfo) {
         info.locals.push(d.id.name)
         const target = d.init && wrappedLocal(d.init)
         if (target && target !== d.id.name) info.aliases[d.id.name] = target
+        const str = d.init && stringValue(d.init, info.constants)
+        if (str !== null && str !== undefined) info.constants[d.id.name] = str
       }
     } else if ((decl.type === 'FunctionDeclaration' || decl.type === 'ClassDeclaration') && decl.id) {
       info.locals.push(decl.id.name)
@@ -172,6 +204,11 @@ function parseScript(code: string, lang: string, info: FileInfo) {
         const exported = s.exported.type === 'Identifier' ? s.exported.name : s.exported.value
         if (stmt.source) info.reExports.push({ exported, imported: s.local.name, source: stmt.source.value })
         else info.reExports.push({ exported, imported: s.local.name, local: s.local.name })
+      }
+      // export function useFoo() {}
+      if (stmt.declaration?.type === 'FunctionDeclaration' && stmt.declaration.id) {
+        const name = stmt.declaration.id.name
+        info.reExports.push({ exported: name, imported: name, local: name })
       }
       // export const Foo = () => import('./Foo.vue') / withInstall(foo) / Bar
       if (stmt.declaration?.type === 'VariableDeclaration') {
@@ -210,8 +247,9 @@ function parseScript(code: string, lang: string, info: FileInfo) {
       for (const p of node.value.properties) {
         const name = propKey(p)
         if (!name) continue
-        if (p.value.type === 'Identifier') {
-          info.registered.push({ name, local: p.value.name })
+        const value = unwrapTs(p.value)
+        if (value.type === 'Identifier') {
+          info.registered.push({ name, local: value.name })
         } else {
           const found = collectDynamicImports(p.value)
           if (found.length === 1) {
@@ -228,10 +266,17 @@ function parseScript(code: string, lang: string, info: FileInfo) {
       node.callee.property.type === 'Identifier' &&
       node.callee.property.name === 'component' &&
       node.arguments.length >= 2 &&
-      node.arguments[0].type === 'StringLiteral'
+      (node.arguments[0].type === 'StringLiteral' ||
+        (unwrapTs(node.arguments[0]).type === 'MemberExpression' && unwrapTs(node.arguments[0]).property.name === 'name'))
     ) {
+      // app.component(Foo.name, Foo) は、Foo が宣言した name で登録される
+      if (node.arguments[0].type !== 'StringLiteral') {
+        const arg = unwrapTs(node.arguments[1])
+        if (arg.type === 'Identifier') info.globals.push({ name: '', local: arg.name, nameFromComponent: true })
+        return
+      }
       const name = node.arguments[0].value
-      const arg = node.arguments[1]
+      const arg = unwrapTs(node.arguments[1])
       if (arg.type === 'Identifier') {
         info.globals.push({ name, local: arg.name })
       } else {
@@ -248,15 +293,69 @@ function parseScript(code: string, lang: string, info: FileInfo) {
     ) {
       info.createsRouter = true
     }
-    // createApp(App)
+    // createApp(App) / createApp({ render: () => h(App) }) / new Vue({ render: h => h(App) })
+    const appCall =
+      (node.type === 'CallExpression' && node.callee.type === 'Identifier' && /^create(SSR)?App$/.test(node.callee.name)) ||
+      (node.type === 'NewExpression' && node.callee.type === 'Identifier' && node.callee.name === 'Vue')
+    if (appCall) {
+      const arg = unwrapTs(node.arguments[0])
+      if (arg?.type === 'Identifier') info.appRoots.push(arg.name)
+      else if (arg?.type === 'ObjectExpression') {
+        const render = arg.properties.find((p: any) => propKey(p) === 'render' || p.key?.name === 'render')
+        const body = render && (render.value ?? render)
+        walk(body, (n) => {
+          if (n.type === 'CallExpression' && n.arguments[0]?.type === 'Identifier' && /^(h|createElement)$/.test(n.callee.name ?? '')) {
+            info.appRoots.push(n.arguments[0].name)
+          }
+        })
+      }
+    }
+    // defineOptions({ name: 'Foo' }) / defineComponent({ name: 'Foo' }) / export default { name: 'Foo' }
+    if (
+      (node.type === 'CallExpression' && /^(defineOptions|defineComponent)$/.test(node.callee.name ?? '')) ||
+      (node.type === 'ExportDefaultDeclaration' && node.declaration.type === 'ObjectExpression')
+    ) {
+      const obj = node.type === 'CallExpression' ? node.arguments[0] : node.declaration
+      const name = obj?.type === 'ObjectExpression' ? obj.properties.find((p: any) => propKey(p) === 'name')?.value : null
+      if (name?.type === 'StringLiteral' && info.kind === 'component') info.declaredName ??= name.value
+    }
+    // new URL('./img.png', import.meta.url) で参照する画像
+    if (
+      node.type === 'NewExpression' &&
+      node.callee.type === 'Identifier' &&
+      node.callee.name === 'URL' &&
+      node.arguments[0]?.type === 'StringLiteral' &&
+      node.arguments[1]?.type === 'MemberExpression' &&
+      node.arguments[1].object.type === 'MetaProperty'
+    ) {
+      info.assets.push(node.arguments[0].value)
+    }
+    // resolveComponent('Foo') はテンプレートでの使用と同じ
     if (
       node.type === 'CallExpression' &&
       node.callee.type === 'Identifier' &&
-      /^create(SSR)?App$/.test(node.callee.name) &&
-      node.arguments[0]?.type === 'Identifier'
+      node.callee.name === 'resolveComponent' &&
+      node.arguments[0]?.type === 'StringLiteral'
     ) {
-      info.appRoots.push(node.arguments[0].name)
+      info.tags.push(node.arguments[0].value)
     }
+    // nuxt-og-image
+    if (
+      node.type === 'CallExpression' &&
+      node.callee.type === 'Identifier' &&
+      /^defineOgImage(Component)?$/.test(node.callee.name)
+    ) {
+      const arg = node.arguments[0]
+      if (arg?.type === 'StringLiteral') info.ogImages.push(arg.value)
+      else if (arg?.type === 'ObjectExpression') {
+        const c = arg.properties.find((p: any) => propKey(p) === 'component')
+        if (c?.value.type === 'StringLiteral') info.ogImages.push(c.value.value)
+      }
+    }
+    if (node.type === 'CallExpression' && node.callee.type === 'Identifier') info.calls.push(node.callee.name)
+    // 変数入りの import('./pages/${name}.vue') は glob として扱う
+    const pattern = dynamicImportPattern(node)
+    if (pattern && !bound.has(node)) info.globs.push(pattern)
     const dyn = dynamicImportSource(node)
     if (dyn && !bound.has(node)) info.bareImports.push({ source: dyn, async: true })
     // webpack の require.context('./components', true, /\.vue$/)
@@ -277,9 +376,16 @@ function parseScript(code: string, lang: string, info: FileInfo) {
     // Nuxt の definePageMeta({ layout: 'admin' }) / { layout: false }
     if (node.type === 'CallExpression' && node.callee.type === 'Identifier' && node.callee.name === 'definePageMeta') {
       const arg = node.arguments[0]
-      const layout = arg?.type === 'ObjectExpression' ? arg.properties.find((p: any) => propKey(p) === 'layout')?.value : null
+      const prop = (o: any, key: string) => (o?.type === 'ObjectExpression' ? o.properties.find((p: any) => propKey(p) === key)?.value : null)
+      let layout = prop(arg, 'layout')
+      // { layout: { name: 'side', props } }
+      if (layout?.type === 'ObjectExpression') layout = prop(layout, 'name')
       if (layout?.type === 'StringLiteral') info.pageLayout = layout.value
       else if (layout?.type === 'BooleanLiteral' && !layout.value) info.pageLayout = false
+      const path = prop(arg, 'path')
+      if (path?.type === 'StringLiteral') info.pagePath = path.value
+      const alias = prop(arg, 'alias')
+      for (const a of alias?.type === 'ArrayExpression' ? alias.elements : [alias]) if (a?.type === 'StringLiteral') info.pageAliases.push(a.value)
     }
     // import.meta.glob('./views/**/*.vue') / glob(['a', '!b'])
     if (
@@ -337,10 +443,25 @@ function toRoute(obj: any, code: string): RawRoute | null {
   }
 
   const refs: RouteRef[] = []
+  let unknownViews = 0
   const pushRef = (v: any, view: string) => {
     if (v.type === 'Identifier') return refs.push({ local: v.name, view })
     const found = collectDynamicImports(v)
-    if (found.length === 1) refs.push({ source: found[0].source, view })
+    if (found.length === 1) return refs.push({ source: found[0].source, view })
+    // () => import(`@/pages/${name}.vue`)
+    let glob: string | null = null
+    const hints: string[] = []
+    walk(v, (n) => {
+      const found = dynamicImportPattern(n)
+      if (found && !glob) {
+        glob = found
+        const arg = n.type === 'ImportExpression' ? n.source : n.arguments[0]
+        for (const e of arg.expressions) walk(e, (x) => x.type === 'StringLiteral' && hints.push(x.value))
+      }
+    })
+    if (glob) return refs.push({ glob, view, ...(hints.length ? { hints } : {}) })
+    // component: createListView('top') のような関数呼び出しは、どの画面か分からない
+    if (v.type === 'CallExpression') unknownViews++
   }
   if (props.has('component')) pushRef(props.get('component'), 'default')
   const named = props.get('components')
@@ -353,7 +474,21 @@ function toRoute(obj: any, code: string): RawRoute | null {
 
   const children: RawRoute[] = []
   if (props.has('children')) findRoutes(props.get('children'), code, children)
-  return { path, dynamic, refs, children, redirect: props.has('redirect') }
+  const aliasNode = props.get('alias')
+  const aliases = (aliasNode?.type === 'ArrayExpression' ? aliasNode.elements : [aliasNode])
+    .filter((a: any) => a?.type === 'StringLiteral')
+    .map((a: any) => a.value)
+  const pathParts = dynamic ? concatParts(pathNode) : undefined
+  return {
+    path,
+    dynamic,
+    refs,
+    children,
+    redirect: props.has('redirect'),
+    aliases,
+    ...(pathParts ? { pathParts } : {}),
+    ...(unknownViews ? { unknownView: true } : {}),
+  }
 }
 
 export const STYLE_RE = /\.(css|scss|sass|less|styl|stylus|pcss|postcss)$/
@@ -389,6 +524,67 @@ function parseMarkdown(source: string, info: FileInfo) {
   // Nuxt Content（MDC）の ::read-more（ブロック）と :badge[...] / :icon{...}（インライン）
   for (const m of body.matchAll(/^\s*::+([a-zA-Z][\w-]*)/gm)) info.tags.push(m[1])
   for (const m of body.matchAll(/(?:^|[\s(]):([a-zA-Z][\w-]*)(?=[[{])/gm)) info.tags.push(m[1])
+}
+
+/** `x as Component` / `x satisfies T` / `x!` の中身 */
+function unwrapTs(node: any): any {
+  while (node && (node.type === 'TSAsExpression' || node.type === 'TSSatisfiesExpression' || node.type === 'TSNonNullExpression')) {
+    node = node.expression
+  }
+  return node
+}
+
+/** 文字列リテラル、または同じファイルの文字列定数だけでできた式の値 */
+function stringValue(node: any, constants: Record<string, string>): string | null {
+  node = unwrapTs(node)
+  if (node?.type === 'StringLiteral') return node.value
+  if (node?.type === 'Identifier' && node.name in constants) return constants[node.name]
+  if (node?.type === 'TemplateLiteral') {
+    let out = node.quasis[0].value.cooked
+    for (let i = 0; i < node.expressions.length; i++) {
+      const v = stringValue(node.expressions[i], constants)
+      if (v === null) return null
+      out += v + node.quasis[i + 1].value.cooked
+    }
+    return out
+  }
+  if (node?.type === 'BinaryExpression' && node.operator === '+') {
+    const a = stringValue(node.left, constants)
+    const b = stringValue(node.right, constants)
+    return a === null || b === null ? null : a + b
+  }
+  return null
+}
+
+/** `${BASE}/x` や BASE + '/x' を、文字列と識別子の並びにする（識別子は別ファイルの定数でもよい） */
+function concatParts(node: any): ({ str: string } | { ident: string })[] | undefined {
+  node = unwrapTs(node)
+  if (node.type === 'StringLiteral') return [{ str: node.value }]
+  if (node.type === 'Identifier') return [{ ident: node.name }]
+  if (node.type === 'TemplateLiteral') {
+    const out: ({ str: string } | { ident: string })[] = [{ str: node.quasis[0].value.cooked }]
+    for (let i = 0; i < node.expressions.length; i++) {
+      const e = node.expressions[i]
+      if (e.type !== 'Identifier') return undefined
+      out.push({ ident: e.name }, { str: node.quasis[i + 1].value.cooked })
+    }
+    return out
+  }
+  if (node.type === 'BinaryExpression' && node.operator === '+') {
+    const a = concatParts(node.left)
+    const b = concatParts(node.right)
+    return a && b ? [...a, ...b] : undefined
+  }
+  return undefined
+}
+
+/** import(`./pages/${name}.vue`) → './pages/*.vue'。変数を含まない import は null */
+function dynamicImportPattern(node: any): string | null {
+  const arg = node.type === 'ImportExpression' ? node.source : node.type === 'CallExpression' && node.callee.type === 'Import' ? node.arguments[0] : null
+  if (arg?.type !== 'TemplateLiteral' || !arg.expressions.length) return null
+  const pattern = arg.quasis.map((q: any) => q.value.cooked).join('*')
+  // 先頭が変数（`${dir}/x.vue`）だと範囲が決まらないので扱わない
+  return /^[.@~/]/.test(pattern) ? pattern : null
 }
 
 /** `Foo` や `withInstall(Foo)` のように、そのまま（または包んで）公開している変数名 */
@@ -513,6 +709,11 @@ function isCandidates(exp: string): string[] {
   return out
 }
 
+/** MDC で ::div のように書ける HTML 要素。同名の部品が無ければコンポーネントではない */
+export const HTML_TAGS = new Set(
+  'a abbr address article aside audio b blockquote br button canvas caption code col details dd del dialog div dl dt em embed fieldset figcaption figure footer form h1 h2 h3 h4 h5 h6 header hr i iframe img input ins kbd label legend li main mark nav object ol p picture pre q s section select small source span strong sub summary sup table tbody td textarea tfoot th thead time tr u ul video'.split(' '),
+)
+
 const ASSET_ATTRS = new Set(['src', 'href', 'poster', 'srcset', 'xlink:href'])
 
 function walkTemplate(node: any, info: FileInfo) {
@@ -535,6 +736,10 @@ function walkTemplate(node: any, info: FileInfo) {
       if (p.type === ATTRIBUTE && ASSET_ATTRS.has(p.name) && p.value && isLocalRef(p.value.content)) {
         info.assets.push(p.value.content)
       }
+    }
+    if (/^(NuxtLayout|nuxt-layout)$/.test(node.tag)) {
+      const name = node.props.find((p: any) => p.type === ATTRIBUTE && p.name === 'name' && p.value)
+      if (name) info.layoutRefs.push(name.value.content)
     }
     const builtin = BUILTIN_TAGS.has(node.tag.replace(/-/g, '').toLowerCase())
     if (!isTarget && !builtin && node.tagType === TAG_COMPONENT) info.tags.push(node.tag)

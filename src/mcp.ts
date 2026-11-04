@@ -1,12 +1,13 @@
-import { relative, resolve, sep } from 'node:path'
+import { statSync } from 'node:fs'
+import { join, relative, resolve, sep } from 'node:path'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod'
 import { impactLines } from './format'
-import { analyze, type FileDeps, type Graph } from './graph'
+import { analyze, scanFiles, type FileDeps, type Graph } from './graph'
 import { t } from './i18n'
 import { analyzeImpact, gitChangedFiles } from './impact'
-import { componentInfo, issuesReport, QueryError, routesReport, whoUses } from './report'
+import { caveats, componentInfo, issuesReport, QueryError, routesReport, whoUses } from './report'
 import { checkProjectRoot } from './root'
 
 const VERSION = '0.1.0'
@@ -28,7 +29,7 @@ function run(fn: () => string[]): ToolResult {
 }
 
 export function createServer(defaultRoot: string): McpServer {
-  const server = new McpServer({ name: 'vue-component-graph', version: VERSION })
+  const server = new McpServer({ name: 'vue-component-graph', version: VERSION }, { instructions: t('mcpInstructions', defaultRoot) })
   // 説明文は起動時の言語で作る
   const rootParam = z.string().optional().describe(t('rootParam'))
   const componentParam = z.string().describe(t('componentParam'))
@@ -37,10 +38,15 @@ export function createServer(defaultRoot: string): McpServer {
     const dir = resolve(defaultRoot, root ?? '.')
     const problem = checkProjectRoot(dir)
     if (problem) throw new ToolError(problem)
-    const result = analyze(dir)
+    // 同じプロジェクトへの問い合わせが続くので、ファイルが変わっていなければ前回の解析を使う
+    const stamp = fingerprint(dir)
+    const hit = cache.get(dir)
+    const result = hit && hit.stamp === stamp ? hit.result : analyze(dir)
+    cache.set(dir, { stamp, result })
     if (!result.graph.nodes.some((n) => n.kind === 'component')) throw new ToolError(t('noVueFiles', dir))
     return result
   }
+  const cache = new Map<string, { stamp: string; result: { graph: Graph; deps: FileDeps } }>()
 
   const readOnly = { readOnlyHint: true, openWorldHint: false }
 
@@ -94,8 +100,9 @@ export function createServer(defaultRoot: string): McpServer {
           label = files?.length ? t('diffFromPlusFiles', since) : t('diffFrom', since)
         }
         const impact = analyzeImpact(graph, deps, changed, since ?? '', files?.map((f) => resolve(graph.root, f)))
-        const lines = impactLines(graph, impact, label)
-        const unknown = (files ?? []).filter((f) => !impact.changed.includes(relativeId(graph, f)))
+        const lines = [...caveats(graph), ...impactLines(graph, impact, label)]
+        const listed = new Set([...impact.changed, ...impact.unlinked, ...impact.projectWide])
+        const unknown = (files ?? []).filter((f) => !listed.has(relativeId(graph, f)))
         if (unknown.length) lines.push('', t('ignoredFiles', unknown))
         return lines
       }),
@@ -130,6 +137,22 @@ export function createServer(defaultRoot: string): McpServer {
 
 export async function startMcpServer(root: string) {
   await createServer(root).connect(new StdioServerTransport())
+}
+
+/** 解析対象のファイルの一覧と更新時刻。どれかが変われば解析し直す */
+function fingerprint(dir: string): string {
+  let out = ''
+  for (const file of scanFiles(dir)) {
+    try {
+      out += `${file}:${statSync(file).mtimeMs}\n`
+    } catch {}
+  }
+  for (const extra of ['package.json', 'tsconfig.json', 'components.d.ts', 'src/components.d.ts', '.nuxt/components.d.ts']) {
+    try {
+      out += `${extra}:${statSync(join(dir, extra)).mtimeMs}\n`
+    } catch {}
+  }
+  return out
 }
 
 function relativeId(graph: Graph, file: string): string {

@@ -41,7 +41,7 @@ const ja = {
   impactTitle: (label: string) => `変更の影響（${label}）`,
   impactNone: '解析対象に関係する変更はありません',
   changedFiles: (n: number) => `変更ファイル (${n})`,
-  affectedComponents: (n: number) => `影響するコンポーネント (${n})`,
+  affectedComponents: (n: number) => `影響するコンポーネント（変更したもの以外） (${n})`,
   pagesToCheck: (n: number) => `確認するページ (${n})`,
   everywhere: ' ← 全ページに影響',
 
@@ -97,6 +97,17 @@ const ja = {
   summary: (components: number, edges: number, routes: number) =>
     `コンポーネント ${components}、依存 ${edges}、ルート ${routes}`,
   deletedMark: '（削除）',
+  projectWideMark: '（プロジェクト全体に効く）',
+  missingLayout: (name: string) => `definePageMeta の layout "${name}" に当たるファイルが layouts/ にありません`,
+  customComponentDir: (dir: string) =>
+    `nuxt.config で components のディレクトリ ${dir} を足しています。そこの部品の名前は推定できないので、nuxi prepare を実行して .nuxt/ を作ると正確になります`,
+  unresolvedLocalTags: (n: number, names: string[]) =>
+    `プロジェクト内の .vue と同じ名前なのに解決できないタグが ${n} 個あります（${names.join(', ')}）。自動 import の components.d.ts が無い可能性があり、未使用の判定に影響します`,
+  projectWide: (files: string[]) => `プロジェクト全体に効く変更 (${files.length}): ${files.join(', ')}`,
+  renamedFrom: (from: string) => `（${from} から移動）`,
+  andMore: (n: number) => `…ほか ${n} 件`,
+  unknownViewRoutes: (n: number, paths: string[]) =>
+    `component が関数呼び出しで画面を特定できないルートが ${n} 件あります（${paths.join(', ')}）。ページの一覧には入りません`,
   remoteLayer: (layer: string) => `Nuxt のレイヤー ${layer} はリポジトリの外にあるので解析しません（その部品やページは解決できません）`,
   unresolvedImports: (n: number) => `解決できない import (${n})`,
   unresolvedImportsHint:
@@ -111,7 +122,17 @@ const ja = {
   namedViews: (names: string[]) => `名前付きビュー: ${names.join(', ')}`,
   routeNotes: (notes: string[]) => `（${notes.join(' / ')}）`,
   sharedByAll: (names: string[]) => `全ページ共通: ${names.join(', ')}`,
-  pagesShell: '表示されるページ: 全ページ（App や共通レイアウトの配下で常に表示）',
+  pagesShell: '表示されるページ: 全ページに出得る（App から辿れる。条件付きの表示も含む）',
+  importOnlyPages: '[import のみ] のページは、import しているだけで描画していない可能性があります',
+  externalUsedBy: (name: string, n: number) => `${name} はこのプロジェクトのファイルではありません（ライブラリかグローバル登録）。使っているコンポーネント (${n}):`,
+  incompleteImports: (n: number) =>
+    `解決できない import が ${n} 件あります。「未使用」「ページなし」「確認するページ 0」は、その分だけ不正確な可能性があります（find_issues で一覧）`,
+  routeAliases: (paths: string[]) => `別名: ${paths.join(', ')}`,
+  mcpInstructions: (root: string) =>
+    `Vue プロジェクトのコンポーネントの依存とページを静的解析するツール。root を省略すると ${root} を解析する。` +
+    'root は package.json のあるディレクトリ（モノレポならパッケージ）を渡す。回答の先頭に ! で始まる注意があるときは、解析が不完全なので「未使用」や「確認するページ 0」を断定しない。',
+  optRoutes: 'ページ（ルート）の一覧を出す',
+  summaryMarkdown: (n: number) => `（ほかに Markdown のページ ${n}）`,
   pagesNone: (reason: string) => `表示されるページ: なし（${reason}）`,
   pagesOf: (n: number) => `表示されるページ (${n}):`,
   importOnly: 'import のみ',
@@ -165,7 +186,7 @@ const en: Messages = {
   impactTitle: (label) => `Change impact (${label})`,
   impactNone: 'No changes relevant to the analysis',
   changedFiles: (n) => `Changed files (${n})`,
-  affectedComponents: (n) => `Affected components (${n})`,
+  affectedComponents: (n) => `Affected components, besides the changed ones (${n})`,
   pagesToCheck: (n) => `Pages to check (${n})`,
   everywhere: ' ← affects every page',
 
@@ -216,6 +237,17 @@ const en: Messages = {
   staleAutoImport: (dts, spec) => `${dts}: ${spec} does not exist (components.d.ts may be stale)`,
   summary: (components, edges, routes) => `${components} components, ${edges} edges, ${routes} routes`,
   deletedMark: ' (deleted)',
+  projectWideMark: ' (project-wide)',
+  missingLayout: (name) => `No file in layouts/ matches the definePageMeta layout "${name}"`,
+  customComponentDir: (dir) =>
+    `nuxt.config adds the components directory ${dir}. Names there can't be inferred; run nuxi prepare to create .nuxt/ for exact names`,
+  unresolvedLocalTags: (n, names) =>
+    `${n} tags have the same name as a .vue file in the project but couldn't be resolved (${names.join(', ')}). The auto-import components.d.ts may be missing; this affects the unused check`,
+  projectWide: (files) => `Project-wide changes (${files.length}): ${files.join(', ')}`,
+  renamedFrom: (from) => ` (moved from ${from})`,
+  andMore: (n) => `...and ${n} more`,
+  unknownViewRoutes: (n, paths) =>
+    `${n} routes use a function call as their component, so their screen is unknown (${paths.join(', ')}). They are not listed as pages`,
   remoteLayer: (layer) => `Nuxt layer ${layer} is outside the repository and isn't analyzed (its components and pages can't be resolved)`,
   unresolvedImports: (n) => `Unresolved imports (${n})`,
   unresolvedImportsHint:
@@ -230,7 +262,17 @@ const en: Messages = {
   namedViews: (names) => `named views: ${names.join(', ')}`,
   routeNotes: (notes) => ` (${notes.join(' / ')})`,
   sharedByAll: (names) => `On every page: ${names.join(', ')}`,
-  pagesShell: 'Pages: every page (always rendered under App or a shared layout)',
+  pagesShell: 'Pages: may appear on every page (reachable from App, including conditional rendering)',
+  importOnlyPages: 'Pages marked [import only] only import it; it may not actually render there',
+  externalUsedBy: (name, n) => `${name} is not a file in this project (a library or a global registration). Used by (${n}):`,
+  incompleteImports: (n) =>
+    `${n} imports couldn't be resolved, so "Unused", "Pages: none" and "0 pages to check" may be inaccurate (see find_issues)`,
+  routeAliases: (paths) => `alias: ${paths.join(', ')}`,
+  mcpInstructions: (root) =>
+    `Static analysis of a Vue project's component dependencies and pages. Without root, ${root} is analyzed. ` +
+    'Pass the directory with package.json as root (a package, in a monorepo). When an answer starts with lines beginning with "!", the analysis is incomplete: do not treat "Unused" or "0 pages to check" as certain.',
+  optRoutes: 'Print the pages (routes)',
+  summaryMarkdown: (n) => ` (plus ${n} Markdown pages)`,
   pagesNone: (reason) => `Pages: none (${reason})`,
   pagesOf: (n) => `Pages (${n}):`,
   importOnly: 'import only',

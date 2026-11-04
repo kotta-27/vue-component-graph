@@ -82,7 +82,7 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
   border-bottom: 1px solid var(--border);
 }
 .brand { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
-.brand strong { font-size: 14px; }
+.brand strong { font-size: 14px; white-space: nowrap; }
 .brand .root {
   color: var(--text-muted);
   font-size: 12px;
@@ -92,7 +92,7 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
   max-width: 28vw;
   direction: rtl;
 }
-.search { position: relative; flex: 1; max-width: 360px; }
+.search { position: relative; flex: 1; min-width: 200px; max-width: 360px; }
 .search input {
   width: 100%;
   padding: 4px 10px;
@@ -104,6 +104,7 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
   position: absolute;
   z-index: 10;
   top: calc(100% + 4px);
+  min-width: 380px;
   left: 0;
   right: 0;
   margin: 0;
@@ -122,6 +123,8 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
 .tools { display: flex; align-items: center; gap: 14px; margin-left: auto; color: var(--text-secondary); white-space: nowrap; }
 .tools label { display: flex; align-items: center; gap: 4px; cursor: pointer; }
 .tools label[hidden] { display: none; }
+/* display を指定した要素でも hidden 属性で隠れるように */
+[hidden] { display: none !important; }
 
 .focus-bar {
   display: flex;
@@ -225,7 +228,7 @@ main { flex: 1; display: flex; min-height: 0; position: relative; }
   overflow: auto;
   padding: 14px 16px 24px;
 }
-.side h2 { font-size: 15px; margin: 0 0 2px; word-break: break-all; }
+.side h2 { font-size: 15px; margin: 0 0 2px; overflow-wrap: anywhere; }
 .side h3 {
   font-size: 11px;
   font-weight: 600;
@@ -285,7 +288,7 @@ table.list th.num, table.list td.num { text-align: right; font-variant-numeric: 
 table.list td { padding: 3px 4px; border-bottom: 1px solid var(--grid); }
 table.list tr.row { cursor: pointer; }
 table.list tr.row:hover td { background: var(--wash); }
-table.list td.name { word-break: break-all; }
+table.list td.name { overflow-wrap: anywhere; }
 /* ページ表：パスを優先して幅を取り、画面名は省略する */
 table.list.pages td:nth-child(2) { max-width: 110px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 table.list.pages td.name { word-break: normal; overflow-wrap: anywhere; }

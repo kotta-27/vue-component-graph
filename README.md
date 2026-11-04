@@ -76,10 +76,11 @@ Change impact (diff from main)
   <img alt="Components and pages affected by a change to usePrice.ts, highlighted" src="https://raw.githubusercontent.com/kotta-27/vue-component-graph/main/docs/impact-light.png">
 </picture>
 
-- Changes outside `.vue` files are followed too: composables, utilities, files loaded with `?raw`, CSS pulled in with `@import` / Sass `@use` (including partials such as `_tooltip.scss`), and images referenced from templates (`<img src="@/assets/logo.svg">`)
+- Changes outside `.vue` files are followed too: composables and utilities (including ones auto-imported by Nuxt or unplugin-auto-import), files loaded with `?raw`, CSS pulled in with `@import` / Sass `@use` (including partials such as `_tooltip.scss`), images referenced from templates or `new URL('./x.png', import.meta.url)`, lazily loaded locale files, and Nuxt Content data (`content/**`, affecting the pages that render or query it)
+- Changes to dependencies and project-wide files (`package.json`, lockfiles, `vite.config.*` and other root configs, `index.html`, `.env*`) are reported as affecting every page
 - A change to a component under `createApp(App)` (such as the header), or to anything the entry loads (global CSS, plugins), is reported as affecting every page
 - A component change is not spread through the router or a store: route tables, `createRouter`, `createApp` and global registration only collect components, and pages are worked out from the routes instead
-- Deleted files are listed with "(deleted)", and files that still import them are reported as affected
+- Deleted and renamed files are listed with "(deleted)" (the old path of a rename), and files that still import them are reported as affected
 - Changed files that don't reach any component or page are listed separately instead of being silently dropped, so "0 pages to check" never hides something the analysis couldn't follow
 - With `--since`, only the impact is printed (no unused list)
 
@@ -112,6 +113,9 @@ For other clients, add this to the config file:
 | `find_issues` | none | Unused components, cycles, recursion, analysis warnings |
 
 - Every tool accepts `root` (the directory containing package.json). If omitted, the server's working directory is used
+- When the analysis is incomplete (unresolved imports, a monorepo root), every answer starts with lines beginning with `!`, so an agent doesn't treat "Unused" or "0 pages to check" as certain
+- Asking about a library or globally registered component (`UButton`, `SvgIcon`) returns the components that use it
+- Results are cached per project and refreshed when a file changes, so repeated calls are fast
 - Passing `files` to `impact` gives a "what if I change these" estimate, so an agent can check how far a change reaches before making it
 - All tools are read-only and never modify files
 
@@ -144,14 +148,16 @@ Pages (4):
 
 | Pattern | Example |
 |---|---|
-| Relative and aliased imports | `import Foo from './Foo.vue'`, tsconfig `paths`, `@/` `~/`, and webpack-style paths that start with a project directory (`src/components/Foo`) |
+| Relative and aliased imports | `import Foo from './Foo.vue'`, tsconfig `paths`, `resolve.alias` written as literals in `vite.config` / `vue.config` / webpack configs, `@/` `~/`, and webpack-style paths that start with a project directory (`src/components/Foo`) |
 | Template tags | `<FooBar>`, `<foo-bar>`, `<component :is="cond ? A : B">` |
 | Options API | `components: { Foo }` |
-| Lazy loading | `defineAsyncComponent(() => import('./Foo.vue'))`, `const Foo = () => import('./Foo.vue')`, webpack's `require()` / `require.ensure` |
-| Global registration | `app.component('Foo', Foo)`. Resolved before a component's own file name, as Vue does |
-| Auto-imports | `components.d.ts` from unplugin-vue-components / Nuxt |
+| Lazy loading | `defineAsyncComponent(() => import('./Foo.vue'))`, `const Foo = () => import('./Foo.vue')`, ``import(`./pages/${name}.vue`)`` (matching files), webpack's `require()` / `require.ensure` |
+| Global registration | `app.component('Foo', Foo)`, `app.component(Foo.name, Foo)` with `defineOptions({ name })`, `as` casts. Resolved before a component's own file name, as Vue does |
+| `resolveComponent` | `resolveComponent('Foo')` counts as using `<Foo>` |
+| Auto-imports | `components.d.ts` from unplugin-vue-components / Nuxt; without it, unplugin-vue-components' default naming (file names under `src/components`) |
 | Nuxt `components/` | Resolved with Nuxt's naming rules even without `.nuxt/` (`user/Card.vue` → `<UserCard>`, `global/Badge.vue` → `<Badge>`, `Lazy` prefix, imports from `#components`), including layers in the repository (`extends: ['./layers/x']`, `layers/*`) |
-| Nuxt Content | Components used from `content/**/*.md` with MDC syntax (`::read-more`, `:kbd[Ctrl]`); `components/content/` is named without the directory |
+| Nuxt Content | Components used from `content/**/*.md` (in layers too) with MDC syntax (`::read-more`, `:kbd[Ctrl]`), linked to the pages that render content with `<ContentRenderer>`; `components/content/` is named without the directory, and `pathPrefix: false` in the `components` setting is honored |
+| nuxt-og-image | `defineOgImage('Name')` / `defineOgImageComponent('Name')` and the default in `nuxt.config` |
 | Barrels | `export { default as Foo } from './Foo.vue'`, `export const Foo = withInstall(foo)`, `export const Layout = () => import('./Layout.vue')`. `Foo/index.ts` wins over `Foo/index.vue`, as in Vite |
 | `import.meta.glob` | Files matched by `import.meta.glob('/src/views/**/*.vue')` or webpack's `require.context()` count as used; their pages are decided at runtime |
 | VitePress | Components imported or used in Markdown pages, and the theme in `.vitepress/theme` |
@@ -166,9 +172,10 @@ Components are named the way Vue resolves them: `SvgIcon/index.vue` is `SvgIcon`
 ### Pages (routes)
 
 - **vue-router**: nested `children`, named views (`components: { default, side }`), dynamic routes built with `.map()` and the like, and route components imported from other modules. A child with an empty path stands for its parent's URL. Routes that only render a shared layout — a parent with `redirect`, a parent whose component wraps several route trees in the default view (the admin-template `Layout`), or a menu entry that points at the layout — and external links (`path: 'https://...'`) are not counted as pages. A parent whose children only fill named views (a list page with a dialog route) is a page
-- **Nuxt**: file-based routing in `pages/` (`[id]`, `[[id]]`, `[...slug]`, `(group)`), including layers. `settings.vue` with `settings/index.vue` is one page, `/settings`. Each page gets the layout it selects with `definePageMeta({ layout })` (`default` otherwise, none for `layout: false`)
+- **Nuxt**: file-based routing in `pages/` (`[id]`, `[[id]]`, `[...slug]`, `(group)`), including layers, and `definePageMeta({ path, alias })`. `settings.vue` with `settings/index.vue` is one page, `/settings`. Each page gets the layout it selects with `definePageMeta({ layout })` — matched by Nuxt's layout names (`layouts/AuthPage.vue` is `auth-page`) — or `<NuxtLayout name>`; `default` otherwise, none for `layout: false`
+- Route paths built from string constants (`` `${BASE}/users` ``, also imported ones) are filled in, and `alias` is shown
 - When the same path is defined more than once (modules that each define `/`), the defining file is shown
-- **Shared by all pages**: everything under `createApp(App)` and Nuxt's `app.vue`
+- **Shared by all pages**: everything reachable from the main `createApp(App)` (also `createApp({ render: () => h(App) })` and Vue 2's `new Vue({ render })`) and Nuxt's `app.vue`. A second `createApp` (a dev panel, say) is a separate app. Some of these may only appear conditionally
 
 ### Structural issues
 
@@ -183,9 +190,9 @@ Components are named the way Vue resolves them: `SvgIcon/index.vue` is `SvgIcon`
 | Hover / click | Highlights the component's ancestors and descendants. In large projects, clicking a component shows its neighborhood |
 | Details panel | Components that use it, components it uses, pages it appears on, external components |
 | "Show descendants only" / "Show users" / "Show neighborhood" | Narrows the graph to that scope (the neighborhood is 1–4 steps up and down; change it with − / +). Summary counts are recalculated for the narrowed scope |
-| Pages tab | Pick a page to see only the components on it |
-| "Hide shared parts" | Components used by many others (buttons, …) are not drawn; their users show `+N` instead |
-| "Group by directory" | Each directory becomes one box, with edge thickness showing how many dependencies cross; click a box to open it |
+| Pages tab | Pick a page to see only the components on it (components on every page are left out and counted in the bar) |
+| "Hide widely used parts" | Components used by many others (buttons, …) are not drawn; their users show `+N` instead |
+| "Group by directory" | Each directory becomes one box, with edge thickness showing how many dependencies cross; click a box to open it. Pages and neighborhoods with more than 150 components are grouped too |
 | "Open in VS Code" | Opens the file in your editor |
 | Tabs | Overview (unused, cycles, …) / List (sortable by parents, children, lines) / Pages (screen and component count per route) |
 | `/` | Search |
@@ -193,7 +200,7 @@ Components are named the way Vue resolves them: `SvgIcon/index.vue` is `SvgIcon`
 | Drag / pinch or Ctrl+wheel | Pan / zoom |
 | `Esc` | Clear selection and filters |
 
-Projects with more than 150 components open grouped by directory, with shared parts hidden and the Pages tab selected, because drawing everything at once is unreadable at that size. Colors follow directories (atoms / molecules / organisms, …). The legend starts folded so it doesn't cover nodes.
+Projects with more than 150 components open grouped by directory, with widely used parts hidden and the Pages tab selected, because drawing everything at once is unreadable at that size. Colors follow directories (atoms / molecules / organisms, …). The legend starts folded so it doesn't cover nodes.
 
 The "日本語" / "English" button switches the language, and the choice is remembered. Light and dark mode follow your OS setting.
 
@@ -211,6 +218,7 @@ vue-component-graph [dir] [options]
 | `--since <ref>` | Show components and pages affected by changes since the git `ref` |
 | `--externals` | Also show external components (from libraries) as nodes |
 | `--json` | Print JSON to stdout instead of writing HTML |
+| `--routes` | Also print the pages (routes) |
 | `--no-open` | Don't open the browser after generating |
 | `--lang <ja\|en>` | Output language (default: `VUE_COMPONENT_GRAPH_LANG`, then `LANG`) |
 
@@ -231,6 +239,7 @@ Results go to stdout and errors to stderr, so `npx vue-component-graph --since m
     id: string            // path relative to root
     name: string          // component name (Foo/index.vue → Foo); path for modules
     label: string         // display name; adds directories when names collide
+    registeredAs?: string[] // names it is globally registered under (app.component('XButton', Button))
     kind: 'component' | 'module' | 'external'
     group: string         // directory directly under src/
     entry: boolean        // rendered directly by the framework (App.vue, file-based pages/ and layouts/, VitePress pages)
@@ -247,6 +256,7 @@ Results go to stdout and errors to stderr, so `npx vue-component-graph --since m
     layouts: string[]     // screens of parent routes
     chain: string[]       // every route component rendered for this route
     source: string        // file that defines the route
+    aliases?: string[]    // other URLs for the same route
   }[]
   orphans: string[]
   cycles: string[][]
@@ -258,7 +268,7 @@ Results go to stdout and errors to stderr, so `npx vue-component-graph --since m
   unresolvedImports: { from: string; spec: string }[]  // project imports that couldn't be resolved
   workspacePackages?: string[]  // when run at a monorepo root: packages that contain .vue files
   impact?: {
-    since: string; changed: string[]; deleted: string[]; unlinked: string[]
+    since: string; changed: string[]; deleted: string[]; unlinked: string[]; projectWide: string[]
     affected: string[]; routes: number[]; everywhere: boolean
   }
 }
@@ -274,11 +284,12 @@ This is static analysis, so anything decided only at runtime is unknown.
 - **Routes from the server**: screens loaded through `import.meta.glob` for routes built at runtime are counted as used, but which pages they appear on is unknown
 - **VitePress**: routes aren't listed. Components used from Markdown are analyzed
 - **Monorepos**: run it in each package. Imports from other packages are not seen, so a component used only by another package is reported as unused. Run at a monorepo root, it says so and lists the packages
-- **Aliases from bundler configs**: `vite.config` / webpack aliases aren't read (tsconfig `paths` are). Imports that can't be resolved are listed, since they can make used components look unused
-- **Skipped directories**: `node_modules`, `.nuxt`, `__tests__` and the like anywhere, and `dist`, `build`, `test`, `tests`, `e2e`, `coverage`, … only at the project root
+- **Aliases built by code**: aliases in bundler configs are read only when written as literals (`path.resolve(__dirname, 'src')`, `fileURLToPath(new URL(...))`); ones returned by a helper function aren't. Imports that can't be resolved are listed, and answers say the analysis is incomplete, since they can make used components look unused
+- **Dynamic names**: components chosen by a runtime string (`resolveComponent(name)`, `h(componentMap[type])`) and routes whose component is a factory call (`createListView('top')`) can't be followed; the latter are reported as warnings
+- **Skipped files**: `node_modules`, `.nuxt`, `__tests__` and the like anywhere; `dist`, `build`, `test`, `tests`, `e2e`, `coverage`, … only at the project root; and `*.spec.*`, `*.test.*`, `*.stories.*`, `*.story.*`, histoire/vitest setup files
 - **Nuxt layers outside the repository** (npm packages, `github:`) aren't analyzed; a warning says which
 - **Vue 2**: analyzed with Vue 3's SFC compiler. Results are usable, but syntax Vue 3 dropped (such as `<template functional>`) shows up as analysis warnings
-- **`components.d.ts` not committed**: auto-imports from unplugin-vue-components are read from the `components.d.ts` the dev server generates; if it isn't in the repository they can't be resolved. Entries pointing at files that no longer exist are reported as warnings. Nuxt is inferred from `components/` even without `.nuxt/`, but directories added in `nuxt.config` and layers are resolved only after `nuxi prepare`
+- **`components.d.ts` not committed**: auto-imports from unplugin-vue-components are read from the `components.d.ts` the dev server generates; if it isn't in the repository they can't be resolved. Entries pointing at files that no longer exist are reported as warnings. Nuxt is inferred from `components/` even without `.nuxt/`, but extra directories added in `nuxt.config` are resolved only after `nuxi prepare` (a warning says so)
 - **Plugin registration**: components registered globally by plugins (`RouterView`, …) are treated as external components
 - **Template languages**: templates in pug and the like are not analyzed
 - **Composables**: composables are not nodes in the graph (impact analysis does follow them)

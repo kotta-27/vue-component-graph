@@ -66,7 +66,7 @@ describe('MCP server', () => {
 
   it('impact with files (hypothetical change)', async () => {
     const { text } = await call('impact', { files: ['src/views/CardB.vue', 'README.md'] })
-    expect(text).toMatch(/影響するコンポーネント \(1\)\n {4}Home\n/)
+    expect(text).toMatch(/影響するコンポーネント（変更したもの以外） \(1\)\n {4}Home\n/)
     expect(text).toMatch(/確認するページ \(1\)\n {4}\/ +Home/)
     expect(text).toContain('解析対象外として無視したファイル: README.md')
   })

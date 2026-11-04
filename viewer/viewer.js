@@ -28,7 +28,8 @@
       legendGroup: 'ディレクトリ（数字は部品数）',
       legendShared: (n) => `隠した共通部品の数（${n} か所以上で使われるもの）`,
       scopeAround: (name, d) => `<strong>${name}</strong> の周辺（${d} 段）を表示中`,
-      scopePage: (path, n, hidden) => `ページ <strong>${path}</strong> の部品を表示中（${n}${hidden ? `、ほかに共通部品 ${hidden}` : ''}）`,
+      scopePage: (path, n, hidden, every) =>
+        `ページ <strong>${path}</strong> の部品を表示中（${n}${hidden ? `、隠したよく使う部品 ${hidden}` : ''}${every ? `、全ページ共通 ${every} は省略` : ''}）`,
       scopeGroups: 'ディレクトリ単位で表示中（箱をクリックで開く・部品をクリックでその周辺）',
       closeAll: 'すべて閉じる',
       depthLess: '段数を減らす',
@@ -92,7 +93,7 @@
       dynamic: '動的',
       pages: '表示されるページ',
       pagesN: (n) => `表示されるページ（${n}）`,
-      shellNote: (name) => `全ページ（${name} の配下で常に表示）`,
+      shellNote: (name) => `全ページに出得る（${name} から辿れる。条件付きの表示も含む）`,
       unreachable: 'ルートから辿れない',
       loadedDynamically: (mods) => `${mods} から動的に読み込まれるため、ページは実行時に決まる`,
       noRoutes: 'ルート定義が見つからない',
@@ -101,6 +102,10 @@
         `${dir}/ はファイルベースルーティング（vue-router の Vite プラグイン、vite-plugin-pages など）と思われますが、まだ対応していません。ページのコンポーネント自体は解析しています`,
       sharedByAll: (names) => `全ページ共通：${names.join('、')}`,
       sharedByAllCount: (n) => `全ページ共通の部品（${n}）`,
+      rootCluster: '(直下)',
+      outsideCluster: '(プロジェクトの外)',
+      projectWide: (n) => `プロジェクト全体に効く変更（${n}）`,
+      unlinkedTitle: (n) => `どのコンポーネントにもつながらなかった変更（${n}）`,
       colPath: 'パス',
       colScreen: '画面',
       colParts: '部品',
@@ -109,6 +114,7 @@
       impactNone: '解析対象に関係する変更はありません',
       impactChanged: (n) => `変更ファイル（${n}）`,
       changedTag: '変更',
+      deletedTag: '削除',
       impactAffected: (n) => `影響を受けるコンポーネント（${n}）`,
       impactPages: (n) => `確認するページ（${n}）`,
       allPages: '全ページ',
@@ -125,16 +131,17 @@
       optModulesTitle: 'JS/TS files that import .vue files, such as main.ts and router.ts',
       fit: 'Fit',
       legend: 'Legend',
-      optShared: 'Hide shared parts',
+      optShared: 'Hide widely used parts',
       optSharedTitle: (n) => `Components used by ${n}+ components (buttons, …) are not drawn; their users show a count instead`,
       optGroups: 'Group by directory',
       optGroupsTitle: 'Collapse each directory into one box. Click a box to open it',
       sharedHidden: (names) => `Hidden shared parts: ${names}`,
       groupTooltip: (n) => `${n} components. Click to open`,
       legendGroup: 'Directory (number of components)',
-      legendShared: (n) => `Hidden shared parts (used in ${n}+ places)`,
+      legendShared: (n) => `Hidden widely used parts (used in ${n}+ places)`,
       scopeAround: (name, d) => `Showing ${d} step${d > 1 ? 's' : ''} around <strong>${name}</strong>`,
-      scopePage: (path, n, hidden) => `Showing the parts of page <strong>${path}</strong> (${n}${hidden ? `, plus ${hidden} shared` : ''})`,
+      scopePage: (path, n, hidden, every) =>
+        `Showing the parts of page <strong>${path}</strong> (${n}${hidden ? `, ${hidden} widely used parts hidden` : ''}${every ? `, ${every} on every page omitted` : ''})`,
       scopeGroups: 'Grouped by directory (click a box to open it, a component to see its neighborhood)',
       closeAll: 'Close all',
       depthLess: 'Fewer steps',
@@ -199,7 +206,7 @@
       dynamic: 'dynamic',
       pages: 'Pages',
       pagesN: (n) => `Pages (${n})`,
-      shellNote: (name) => `Every page (always rendered under ${name})`,
+      shellNote: (name) => `May appear on every page (reachable from ${name}, including conditional rendering)`,
       unreachable: 'Not reachable from any route',
       loadedDynamically: (mods) => `Loaded dynamically by ${mods}, so its pages are decided at runtime`,
       noRoutes: 'No route definitions found',
@@ -208,6 +215,10 @@
         `${dir}/ looks like file-based routing (vue-router's Vite plugin, vite-plugin-pages, …), which isn't supported yet. The page components themselves are still analyzed`,
       sharedByAll: (names) => `On every page: ${names.join(', ')}`,
       sharedByAllCount: (n) => `Components on every page (${n})`,
+      rootCluster: '(top level)',
+      outsideCluster: '(outside the project)',
+      projectWide: (n) => `Project-wide changes (${n})`,
+      unlinkedTitle: (n) => `Changes not linked to any component (${n})`,
       colPath: 'Path',
       colScreen: 'Screen',
       colParts: 'Parts',
@@ -216,6 +227,7 @@
       impactNone: 'No changes relevant to the analysis',
       impactChanged: (n) => `Changed files (${n})`,
       changedTag: 'changed',
+      deletedTag: 'deleted',
       impactAffected: (n) => `Affected components (${n})`,
       impactPages: (n) => `Pages to check (${n})`,
       allPages: 'all pages',
@@ -278,6 +290,7 @@
    * 4 割以上を占めるまとまり（src/components など）はもう 1 段細かく分ける
    */
   const ROOT_CLUSTER = '/'
+  const clusterLabel = (k) => (k === ROOT_CLUSTER ? t('rootCluster') : k === '..' ? t('outsideCluster') : k)
   const clusterOf = (() => {
     const ids = DATA.nodes.filter((n) => n.kind !== 'external').map((n) => n.id)
     const dirs = ids.map((id) => id.split('/').slice(0, -1))
@@ -312,19 +325,21 @@
   const colorOfCluster = (k) => clusterColor.get(k) || 'var(--text-muted)'
   const colorOf = (n) => (n.kind === 'component' ? colorOfCluster(clusterOf.get(n.id)) : 'var(--text-muted)')
 
-  const defaultScope = () => (large ? { kind: 'groups' } : { kind: 'all' })
+  const defaultScope = () => (state.grouped ? { kind: 'groups' } : { kind: 'all' })
   const state = {
     showScript: true,
     showModules: true,
     showImpact: !!IMPACT,
     /** 共通部品を線で描かず、使う側に数だけ出す */
     hideShared: large,
-    legendOpen: !large,
+    /** ディレクトリでまとめる（全体表示と、部品の多いページ・周辺表示で使う） */
+    grouped: large,
+    legendOpen: false,
     /**
      * 表示する範囲：all（全体）、groups（ディレクトリ単位。expanded は開いた箱）、page（1 ページの部品）、
      * around（選んだ部品の周辺 depth 段）、focus（配下 / 使っている側）
      */
-    scope: defaultScope(),
+    scope: large ? { kind: 'groups' } : { kind: 'all' },
     expanded: new Set(),
     selected: null,
     hover: null,
@@ -394,7 +409,8 @@
       pinned.add(sc.id)
     } else if (sc.kind === 'page') {
       const r = DATA.routes[sc.route]
-      nodes = nodes.filter((n) => n.kind === 'component' && n.routes.includes(sc.route))
+      // 全ページ共通の部品はどのページにも出るので省く（数は上のバーに出す）
+      nodes = nodes.filter((n) => n.kind === 'component' && n.routes.includes(sc.route) && (!n.shell || r.chain.includes(n.id)))
       for (const id of r.chain) pinned.add(id)
     }
     // 共通部品を隠し、使う側に「隠した数」を持たせる
@@ -411,7 +427,9 @@
     const kept = new Set(nodes.map((n) => n.id))
     edges = edges.filter((e) => kept.has(e.from) && kept.has(e.to))
     const members = new Set(kept)
-    if (state.scope.kind !== 'groups') return { nodes, edges, members, hiddenShared }
+    // まとめるのは、全体表示のときと、ページ・周辺でも部品が多すぎるとき
+    const grouping = state.scope.kind === 'groups' || (state.grouped && state.scope.kind !== 'all' && nodes.length > LARGE)
+    if (!grouping) return { nodes, edges, members, hiddenShared }
 
     // ディレクトリ単位：開いていない箱は 1 つのノードにまとめ、箱をまたぐ辺は本数を数える
     const boxOf = (id) => {
@@ -423,10 +441,10 @@
       const b = boxOf(n.id)
       if (b === n.id) continue
       const key = b.slice('group:'.length)
-      if (!boxes.has(b)) boxes.set(b, { id: b, kind: 'group', key, label: key, name: key, members: [], routes: [], externals: [] })
+      if (!boxes.has(b)) boxes.set(b, { id: b, kind: 'group', key, label: clusterLabel(key), name: key, members: [], routes: [], externals: [] })
       boxes.get(b).members.push(n.id)
     }
-    for (const box of boxes.values()) box.label = `${box.key}  ${box.members.length}`
+    for (const box of boxes.values()) box.label = `${clusterLabel(box.key)}  ${box.members.length}`
     const merged = new Map()
     for (const e of edges) {
       const from = boxOf(e.from)
@@ -642,6 +660,40 @@
     return { pos, paths }
   }
 
+  /** ディレクトリの箱を、部品の多い順に格子状に並べる。辺は箱の縁から縁への直線 */
+  function gridLayout(nodes, edges) {
+    const sorted = [...nodes].sort((a, b) => b.members.length - a.members.length)
+    const cellW = Math.max(...sorted.map(nodeWidth)) + 70
+    const cellH = NODE_H + 56
+    // 画面の縦横比に合う列数にして、なるべく大きく表示できるようにする
+    const r = svg.getBoundingClientRect()
+    const aspect = r.width && r.height ? r.width / r.height : 1.4
+    const cols = Math.max(1, Math.min(sorted.length, Math.round(Math.sqrt((sorted.length * aspect * cellH) / cellW))))
+    const pos = new Map()
+    sorted.forEach((n, i) => {
+      const w = nodeWidth(n)
+      pos.set(n.id, { x: (i % cols) * cellW + (cellW - w) / 2, y: Math.floor(i / cols) * cellH + NODE_H / 2, w, h: NODE_H })
+    })
+    // 箱の中心から相手の中心への線を、箱の縁で切る
+    const border = (p, toward) => {
+      const cx = p.x + p.w / 2
+      const dx = toward[0] - cx
+      const dy = toward[1] - p.y
+      const s = Math.min(Math.abs((p.w / 2 + 4) / (dx || 1e-9)), Math.abs((NODE_H / 2 + 4) / (dy || 1e-9)))
+      return [cx + dx * s, p.y + dy * s]
+    }
+    const paths = edges
+      .filter((e) => e.from !== e.to)
+      .map((e) => {
+        const a = pos.get(e.from)
+        const b = pos.get(e.to)
+        const [x1, y1] = border(a, [b.x + b.w / 2, b.y])
+        const [x2, y2] = border(b, [a.x + a.w / 2, a.y])
+        return { edge: e, d: `M${x1},${y1} L${x2},${y2}`, rev: false }
+      })
+    return { pos, paths }
+  }
+
   // ---------- 描画 ----------
   const svg = $('canvas')
   const viewport = $('viewport')
@@ -658,7 +710,8 @@
   function render(fit) {
     const { nodes, edges, members, hiddenShared } = visibleGraph()
     current = { nodes, edges, pos: new Map(), members, hiddenShared }
-    const { pos, paths } = layout(nodes, edges)
+    // 箱だけのとき（ディレクトリ単位の一覧）は、一列に並べると小さすぎるので格子に並べる
+    const { pos, paths } = nodes.length > 1 && nodes.every((n) => n.kind === 'group') ? gridLayout(nodes, edges) : layout(nodes, edges)
     current.pos = pos
     gEdges.textContent = ''
     gNodes.textContent = ''
@@ -906,7 +959,7 @@
     const rows = clusterOrder
       .slice(0, 8)
       .filter((k) => groups.has(k))
-      .map((k) => `<div class="row"><span class="swatch" style="background:${colorOfCluster(k)}"></span>${esc(k)}</div>`)
+      .map((k) => `<div class="row"><span class="swatch" style="background:${colorOfCluster(k)}"></span>${esc(clusterLabel(k))}</div>`)
     if (clusterOrder.length > 8 && clusterOrder.slice(8).some((k) => groups.has(k))) {
       rows.push(`<div class="row"><span class="swatch" style="background:var(--text-muted)"></span>${t('other')}</div>`)
     }
@@ -949,7 +1002,7 @@
       h += `<button type="button" data-depth="-1" title="${t('depthLess')}" ${sc.depth <= 1 ? 'disabled' : ''}>−</button>`
       h += `<button type="button" data-depth="1" title="${t('depthMore')}" ${sc.depth >= 4 ? 'disabled' : ''}>+</button>`
     }
-    if (sc.kind === 'groups' && state.expanded.size) {
+    if (state.expanded.size && current.nodes.some((n) => n.kind === 'group' || clusterOf.has(n.id))) {
       for (const k of [...state.expanded].sort()) h += `<button type="button" class="chip" data-collapse="${esc(k)}">${esc(k)} ×</button>`
       h += `<button type="button" data-collapse-all>${t('closeAll')}</button>`
     }
@@ -966,7 +1019,8 @@
     if (sc.kind === 'around') return t('scopeAround', label(sc.id), sc.depth)
     if (sc.kind === 'page') {
       const hidden = new Set([...current.hiddenShared.values()].flat())
-      return t('scopePage', esc(DATA.routes[sc.route].path), current.members.size, hidden.size)
+      const every = DATA.nodes.filter((n) => n.shell && n.routes.includes(sc.route) && !current.members.has(n.id)).length
+      return t('scopePage', esc(DATA.routes[sc.route].path), current.members.size, hidden.size, every)
     }
     if (sc.kind === 'groups') return t('scopeGroups')
     return ''
@@ -1178,16 +1232,23 @@
   function routeItem(i) {
     const r = DATA.routes[i]
     const page = nodeById.get(r.view)
-    return `<li class="link route" data-route="${i}" title="${esc(r.chain.join(' > '))}"><span class="rpath">${routeLabel(r)}</span><span class="rcomp">${esc(page.label)}</span></li>`
+    return `<li class="link route" data-route="${i}" title="${esc(r.chain.join(' > '))}"><span class="rpath">${routeLabel(r)}</span><span class="rcomp" title="${esc(page.id)}">${esc(screenName(page))}</span></li>`
   }
 
   function shellNames() {
     return DATA.nodes.filter((n) => n.shell).map((n) => n.label)
   }
 
+  /** 画面名。ファイルベースルーティングの pages/ は、パスが長いので先頭を省く */
+  function screenName(n) {
+    return n.label.replace(/^pages\//, '')
+  }
+
   function pagesOfHtml(n) {
     if (n.shell) {
-      return `<h3>${t('pages')}</h3><p class="note">${t('shellNote', esc(shellNames()[0] || 'App'))}</p>`
+      // App から辿れる部品はどのページにも出得る。ルートからも辿れるなら、そのページも出す
+      const own = n.routes.length ? `<ul>${n.routes.slice(0, 30).map(routeItem).join('')}</ul>` : ''
+      return `<h3>${t('pages')}</h3><p class="note">${t('shellNote', esc(shellNames()[0] || 'App'))}</p>${own}`
     }
     if (!n.routes.length) {
       // import.meta.glob や動的 import でだけ読まれる画面は「辿れない」と言い切らない
@@ -1214,11 +1275,12 @@
   function pagesHtml() {
     if (!DATA.routes.length) return `<p class="empty">${noRoutesText()}</p>`
     const counts = DATA.routes.map(() => 0)
-    for (const n of DATA.nodes) if (n.kind === 'component') for (const i of n.routes) counts[i]++
+    for (const n of DATA.nodes) if (n.kind === 'component' && !n.shell) for (const i of n.routes) counts[i]++
     let h = `<p class="note">${t('pagesHint')}</p>`
     const shell = shellNames()
     if (shell.length > 8) {
-      h += `<details class="note"><summary>${t('sharedByAllCount', shell.length)}</summary>${esc(shell.join(', '))}</details>`
+      const ids = DATA.nodes.filter((n) => n.shell).map((n) => n.id)
+      h += `<details class="note"><summary>${t('sharedByAllCount', shell.length)}</summary><ul>${ids.map((id) => nodeItem(id)).join('')}</ul></details>`
     } else if (shell.length) h += `<p class="note">${t('sharedByAll', shell.map(esc))}</p>`
     h += `<table class="list pages"><thead><tr><th>${t('colPath')}</th><th>${t('colScreen')}</th><th class="num" title="${t('colPartsTitle')}">${t('colParts')}</th></tr></thead><tbody>`
     DATA.routes.forEach((r, i) => {
@@ -1227,7 +1289,7 @@
       const active = state.scope.kind === 'page' && state.scope.route === i
       h +=
         `<tr class="row${hit ? ' impacted' : ''}${active ? ' active' : ''}" data-route="${i}" title="${esc(r.chain.join(' > '))}">` +
-        `<td class="name">${routeLabel(r)}</td><td>${esc(page.label)}</td><td class="num">${counts[i]}</td></tr>`
+        `<td class="name">${routeLabel(r)}</td><td title="${esc(page.id)}">${esc(screenName(page))}</td><td class="num">${counts[i]}</td></tr>`
     })
     return h + '</tbody></table>'
   }
@@ -1235,10 +1297,17 @@
   function impactHtml() {
     if (!IMPACT) return ''
     let h = `<section class="impact"><h3 style="margin-top:4px">${t('impactTitle', esc(IMPACT.since))}</h3>`
-    if (!IMPACT.changed.length) return h + `<p class="empty">${t('impactNone')}</p></section>`
+    const fileList = (title, files) =>
+      files && files.length ? `<div class="sub">${title}</div><ul>${files.map((f) => `<li class="file">${esc(f)}</li>`).join('')}</ul>` : ''
+    const notes = fileList(t('projectWide', (IMPACT.projectWide || []).length), IMPACT.projectWide) +
+      fileList(t('unlinkedTitle', (IMPACT.unlinked || []).length), IMPACT.unlinked)
+    if (!IMPACT.changed.length && !(IMPACT.projectWide || []).length) return h + (notes || `<p class="empty">${t('impactNone')}</p>`) + '</section>'
+    const deleted = new Set(IMPACT.deleted || [])
     h += `<div class="sub">${t('impactChanged', IMPACT.changed.length)}</div><ul>`
     h += IMPACT.changed
-      .map((id) => (nodeById.has(id) ? nodeItem(id, [t('changedTag')]) : `<li class="file">${esc(id)}</li>`))
+      .map((id) =>
+        nodeById.has(id) ? nodeItem(id, [t('changedTag')]) : `<li class="file">${esc(id)}${deleted.has(id) ? ` <span class="tag">${t('deletedTag')}</span>` : ''}</li>`,
+      )
       .join('')
     h += '</ul>'
     const others = IMPACT.affected.filter((id) => !changedSet.has(id))
@@ -1246,7 +1315,7 @@
     h += others.length ? `<ul>${others.map((id) => nodeItem(id)).join('')}</ul>` : `<p class="empty">${t('none')}</p>`
     h += `<div class="sub">${t('impactPages', IMPACT.routes.length)}${IMPACT.everywhere ? ` <span class="tag" style="margin:0">${t('allPages')}</span>` : ''}</div>`
     h += IMPACT.routes.length ? `<ul>${IMPACT.routes.map(routeItem).join('')}</ul>` : `<p class="empty">${t('none')}</p>`
-    return h + '</section>'
+    return h + notes + '</section>'
   }
 
   function select(id, center) {
@@ -1398,7 +1467,11 @@
     render(true)
   })
   $('opt-groups').addEventListener('change', (e) => {
-    setScope(e.target.checked ? { kind: 'groups' } : { kind: 'all' })
+    state.grouped = e.target.checked
+    state.expanded.clear()
+    // 全体表示ならまとめ方を切り替え、ページや周辺を見ているならその範囲のまま描き直す
+    if (state.scope.kind === 'groups' || state.scope.kind === 'all') setScope(defaultScope())
+    else render(true)
   })
 
   /** template.html の固定文言（data-i18n*）を今の言語で埋める */
@@ -1448,7 +1521,7 @@
   if (large && DATA.routes.length && !IMPACT) state.tab = 'pages'
   $('opt-shared').checked = state.hideShared
   $('opt-shared-wrap').title = t('optSharedTitle', SHARED_MIN)
-  $('opt-groups').checked = state.scope.kind === 'groups'
+  $('opt-groups').checked = state.grouped
   applyStaticText()
   render(true)
 })()
